@@ -1,0 +1,11 @@
+{
+  "name": "claude-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard local de uso de Claude Code: tokens, actividad y skills, combinando los perfiles .claude, .claude-work y .claude-personal.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  }
+}
