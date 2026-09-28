@@ -829,7 +829,7 @@ const interviewChildren = new Map(); // sessionId -> in-flight agy/claude child 
 // Editar a mano cuando cambie una certificación (ej. al pasar de SAA a SAP).
 const DAVID_CLOUD_BACKGROUND = `Certificaciones actuales: AWS Solutions Architect Associate (SAA), AWS AI Practitioner, AWS ML Engineer Associate, AWS Security Specialty, AWS SysOps/CloudOps, GCP Associate Cloud Engineer (ACE). Trabaja como Cloud AI Trainee en NEO Consulting (stack GCP: BigQuery, Vertex AI, Cloud Run, Pub/Sub, Cloud SQL); antes fue Junior Cloud Specialist en AWS. Ya construyó, en producción-adyacente: ECS Fargate en Graviton2/ARM64 con ALB + CloudFront, Cognito + API Gateway + Lambda + DynamoDB, inferencia PyTorch en SageMaker, microservicios FastAPI en GCP con Firestore.`;
 
-const INTERVIEW_FOCUS_LABEL = { aws: "AWS", gcp: "GCP", general: "multi-cloud / arquitectura general" };
+const INTERVIEW_FOCUS_LABEL = { aws: "AWS", gcp: "GCP", azure: "Azure", kubernetes: "Kubernetes", general: "multi-cloud / arquitectura general" };
 
 function loadInterviews() {
   try { return JSON.parse(fs.readFileSync(INTERVIEWS_FILE, "utf8")); } catch { return []; }
@@ -1856,7 +1856,7 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/interview/start" && req.method === "POST") {
       const body = await readJsonBody(req);
-      const focus = ["aws", "gcp", "general"].includes(body.focus) ? body.focus : "general";
+      const focus = ["aws", "gcp", "azure", "kubernetes", "general"].includes(body.focus) ? body.focus : "general";
       const id = await startInterview(focus);
       res.writeHead(202, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, sessionId: id }));

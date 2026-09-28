@@ -709,7 +709,7 @@ function renderInterviewHistory() {
     wrap.innerHTML = '<div class="skill-empty">Aún no practicaste ninguna entrevista</div>';
     return;
   }
-  const focusLabel = { aws: "AWS", gcp: "GCP", general: "General" };
+  const focusLabel = { aws: "AWS", gcp: "GCP", azure: "Azure", kubernetes: "Kubernetes", general: "General" };
   wrap.innerHTML = INTERVIEW_SESSIONS.map((s) => {
     const date = new Date(s.startedAt).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" });
     const statusText = s.status === "active" ? "en curso" : (s.verdict || "sin veredicto");
@@ -879,7 +879,8 @@ function setupInterviewWidget() {
   };
 
   bubble.addEventListener("click", () => (panel.hidden ? open() : close()));
-  closeBtn.addEventListener("click", close);
+  // stopPropagation so a future parent click handler can't reopen; CSS [hidden] fix is what makes close visible
+  closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
 
   if (localStorage.getItem("claude-dashboard-interview-open") === "1") open();
 }

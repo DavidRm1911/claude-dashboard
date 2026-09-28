@@ -658,6 +658,9 @@ main.is-loading > *:not(.toolbar):not(.hero) { opacity: 0.4; pointer-events: non
   display: flex; flex-direction: column; background: var(--surface); border: var(--line-strong) solid var(--border-strong);
   border-radius: var(--r-0); box-shadow: 0 8px 32px rgba(0,0,0,0.3); overflow: hidden;
 }
+/* display:flex above beats the UA [hidden]{display:none} rule — same fix as .modal-overlay[hidden] */
+.interview-panel[hidden] { display: none; }
+#interviewFocusToggle { flex-wrap: wrap; max-width: 100%; }
 .interview-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-4); border-bottom: var(--line) solid var(--border); background: var(--bg); flex-shrink: 0; }
 .interview-panel-title { display: block; font-family: "Playfair Display", serif; font-weight: 700; font-size: 1.1rem; }
 .interview-panel-sub { display: block; font-size: var(--fs-micro); color: var(--muted); margin-top: 0.2rem; }
