@@ -1797,7 +1797,7 @@ async function loadProviders() {
     const res = await fetch("/api/providers");
     const data = await res.json();
     const grokPart = `Grok CLI: ${data.grokCli ? "ok" : "no encontrado"}`;
-    const lastPart = data.lastGeneration
+    const lastPart = data.lastGeneration?.provider
       ? ` · Última generación: ${data.lastGeneration.provider} · ${PROVIDER_ACTION_LABEL[data.lastGeneration.action] || data.lastGeneration.action}`
       : "";
     el.textContent = `${grokPart}${lastPart}`;

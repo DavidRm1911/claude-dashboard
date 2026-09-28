@@ -1719,8 +1719,8 @@ const server = http.createServer(async (req, res) => {
       try { ideasLatest = JSON.parse(fs.readFileSync(IDEAS_FILE, "utf8"))[0] || null; } catch {}
       try { statusLatest = JSON.parse(fs.readFileSync(PROJECT_STATUS_FILE, "utf8")); } catch {}
       const candidates = [
-        ideasLatest && { action: "ideas", provider: ideasLatest.provider, at: ideasLatest.generatedAt },
-        statusLatest?.generatedAt && { action: "estado", provider: statusLatest.provider, at: statusLatest.generatedAt },
+        ideasLatest?.provider && { action: "ideas", provider: ideasLatest.provider, at: ideasLatest.generatedAt },
+        statusLatest?.provider && statusLatest?.generatedAt && { action: "estado", provider: statusLatest.provider, at: statusLatest.generatedAt },
       ].filter(Boolean).sort((a, b) => new Date(b.at) - new Date(a.at));
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ grokCli, claudeCli, lastGeneration: candidates[0] || null }));
