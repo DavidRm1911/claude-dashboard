@@ -626,6 +626,7 @@ function renderIdeas() {
     const s = batch.sources || {};
     return `<div class="ideas-batch">
       <span class="ideas-batch-date">${date}${batch.custom ? " · idea propia investigada" : ""}</span>
+      ${batch.provider ? `<span class="provider-badge">vía ${escapeHtml(batch.provider)}</span>` : ""}
       <div class="ideas-cards">
         ${(batch.ideas || []).map((idea) => `
           <div class="idea-card">
@@ -670,7 +671,7 @@ async function triggerIdeasGeneration(customIdea) {
   if (ideasPollTimer) return;
   ideasPollTimer = setInterval(async () => {
     await loadIdeas();
-    if (IDEAS_DATA?.job?.status !== "running") { clearInterval(ideasPollTimer); ideasPollTimer = null; }
+    if (IDEAS_DATA?.job?.status !== "running") { clearInterval(ideasPollTimer); ideasPollTimer = null; loadProviders(); }
   }, 5000);
 }
 
@@ -767,6 +768,7 @@ function renderInterviewChat() {
   const answerBox = document.getElementById("interviewAnswerBox");
   const startBtn = document.getElementById("interviewStart");
   const startStatus = document.getElementById("interviewStatus");
+  const cancelBtn = document.getElementById("interviewCancelBtn");
   const respondBtn = document.getElementById("interviewRespond");
   const respondStatus = document.getElementById("interviewRespondStatus");
   const session = CURRENT_INTERVIEW?.session;
@@ -774,6 +776,7 @@ function renderInterviewChat() {
 
   startBtn.disabled = job.status === "running" && !session?.turns?.length;
   startBtn.textContent = job.status === "running" && !session?.turns?.length ? "Preparando…" : "Nueva entrevista";
+  cancelBtn.hidden = job.status !== "running";
 
   if (!session) {
     chatWrap.innerHTML = '<div class="skill-empty">Elige un enfoque arriba y arranca una entrevista nueva.</div>';
@@ -814,12 +817,13 @@ function renderInterviewChat() {
     chatWrap.innerHTML += renderInterviewReport(session);
   }
 
-  const active = session.status === "active" && job.status !== "running";
+  const active = session.status === "active" && job.status !== "running" && session.turns.length > 0;
   answerBox.hidden = !active;
   respondBtn.disabled = job.status === "running";
-  respondStatus.textContent = job.status === "error" ? `Falló: ${job.error || "error desconocido"}` : "";
+  respondStatus.textContent = job.status === "error" ? `Falló: ${job.error || "error desconocido"}` : job.status === "cancelled" ? "Cancelado." : "";
   respondStatus.className = job.status === "error" ? "graphify-status error" : "graphify-status";
-  startStatus.textContent = job.status === "running" ? "Pensando…" : "";
+  startStatus.textContent = job.status === "running" ? "Pensando…" : job.status === "cancelled" ? "Cancelado." : job.status === "error" ? `Falló: ${job.error || "error desconocido"}` : "";
+  startStatus.className = job.status === "error" ? "graphify-status error" : "graphify-status";
 }
 
 function renderInterviewReport(session) {
@@ -890,6 +894,15 @@ async function startNewInterview() {
   if (!data.ok) return;
   currentInterviewId = data.sessionId;
   localStorage.setItem("claude-dashboard-interview-id", currentInterviewId);
+  await loadCurrentInterview();
+}
+
+async function cancelInterview() {
+  if (!currentInterviewId) return;
+  try {
+    await fetch(`/api/interview/cancel?id=${encodeURIComponent(currentInterviewId)}`, { method: "POST" });
+  } catch {}
+  if (interviewPollTimer) { clearInterval(interviewPollTimer); interviewPollTimer = null; }
   await loadCurrentInterview();
 }
 
@@ -1384,6 +1397,7 @@ function setupToolbar() {
 
   document.getElementById("interviewStart").addEventListener("click", startNewInterview);
   document.getElementById("interviewRespond").addEventListener("click", sendInterviewAnswer);
+  document.getElementById("interviewCancelBtn").addEventListener("click", cancelInterview);
   document.getElementById("interviewFocusToggle").addEventListener("click", (e) => {
     const btn = e.target.closest(".org-toggle-btn");
     if (!btn || btn.classList.contains("active")) return;
@@ -1454,7 +1468,7 @@ async function triggerProjectStatusGeneration() {
   if (projectStatusPollTimer) return;
   projectStatusPollTimer = setInterval(async () => {
     await loadProjectStatus();
-    if (PROJECT_STATUS_DATA?.job?.status !== "running") { clearInterval(projectStatusPollTimer); projectStatusPollTimer = null; }
+    if (PROJECT_STATUS_DATA?.job?.status !== "running") { clearInterval(projectStatusPollTimer); projectStatusPollTimer = null; loadProviders(); }
   }, 5000);
 }
 
@@ -1526,7 +1540,7 @@ function renderGithubProjects(projects) {
       </div>
       <div class="project-card-sub">${p.hasDoc ? "CLAUDE.md ✓" : "sin instrucciones"}${p.hasPrivateNote ? ' · <span class="project-note-badge">nota privada ✓</span>' : ""}</div>
       ${a ? `
-        <p class="project-desc">${escapeHtml(a.description || "")}</p>
+        <p class="project-desc">${escapeHtml(a.description || "")}${PROJECT_STATUS_DATA?.provider ? `<span class="provider-badge">vía ${escapeHtml(PROJECT_STATUS_DATA.provider)}</span>` : ""}</p>
         <div class="project-progress-row"><span>Avance</span><span class="project-progress-val">${fmt(a.progress_pct ?? 0)}%</span></div>
         <div class="model-bar-track"><div class="model-bar-fill" style="width:${Math.max(0, Math.min(100, a.progress_pct ?? 0))}%;background:var(--accent)"></div></div>
         ${a.progress_reasoning ? `<div class="project-progress-reasoning">${escapeHtml(a.progress_reasoning)}</div>` : ""}
@@ -1774,6 +1788,24 @@ function revealHero() {
   gsap.fromTo(".hero-row", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" });
 }
 
+const PROVIDER_ACTION_LABEL = { ideas: "ideas", estado: "estado" };
+
+async function loadProviders() {
+  const el = document.getElementById("providerStatus");
+  if (!el) return;
+  try {
+    const res = await fetch("/api/providers");
+    const data = await res.json();
+    const grokPart = `Grok CLI: ${data.grokCli ? "ok" : "no encontrado"}`;
+    const lastPart = data.lastGeneration
+      ? ` · Última generación: ${data.lastGeneration.provider} · ${PROVIDER_ACTION_LABEL[data.lastGeneration.action] || data.lastGeneration.action}`
+      : "";
+    el.textContent = `${grokPart}${lastPart}`;
+  } catch {
+    el.textContent = "";
+  }
+}
+
 async function boot() {
   setupToolbar();
   await fetchStats();
@@ -1782,5 +1814,6 @@ async function boot() {
   setupAutoRefresh(30000);
   fetchProjects();
   setInterval(fetchProjects, 60000); // refresca proyectos cada 60s automáticamente
+  loadProviders();
 }
 boot();

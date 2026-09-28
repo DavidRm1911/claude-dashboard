@@ -200,9 +200,10 @@ const CLAUDE_BIN = resolveBin("claude");
 const GROK_BIN = resolveBin("grok");
 const AGY_BIN = resolveBin("agy");
 
-function execCapture(cmd, args, { timeoutMs = 15000, input, cwd } = {}) {
+function execCapture(cmd, args, { timeoutMs = 15000, input, cwd, onSpawn } = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: [input != null ? "pipe" : "ignore", "pipe", "pipe"], cwd });
+    onSpawn?.(child);
     let out = "";
     let err = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
@@ -822,7 +823,8 @@ async function getProjectInfo(projectPath) {
 // ideas/project-status, una entrada por sesión en INTERVIEWS_FILE.
 
 const INTERVIEWS_FILE = path.join(IDEAS_DIR, "interviews.json");
-const interviewJobs = new Map(); // sessionId -> { status: "running"|"done"|"error", error }
+const interviewJobs = new Map(); // sessionId -> { status: "running"|"done"|"error"|"cancelled", error }
+const interviewChildren = new Map(); // sessionId -> in-flight agy/claude child process, so cancel can kill it
 
 // Editar a mano cuando cambie una certificación (ej. al pasar de SAA a SAP).
 const DAVID_CLOUD_BACKGROUND = `Certificaciones actuales: AWS Solutions Architect Associate (SAA), AWS AI Practitioner, AWS ML Engineer Associate, AWS Security Specialty, AWS SysOps/CloudOps, GCP Associate Cloud Engineer (ACE). Trabaja como Cloud AI Trainee en NEO Consulting (stack GCP: BigQuery, Vertex AI, Cloud Run, Pub/Sub, Cloud SQL); antes fue Junior Cloud Specialist en AWS. Ya construyó, en producción-adyacente: ECS Fargate en Graviton2/ARM64 con ALB + CloudFront, Cognito + API Gateway + Lambda + DynamoDB, inferencia PyTorch en SageMaker, microservicios FastAPI en GCP con Firestore.`;
@@ -1035,6 +1037,7 @@ const INTERVIEW_JSON_SCHEMA = JSON.stringify({
 // Claude con el parseo por regex + sanitizeJsonControlChars de antes, mismo
 // patrón "barato primero, Claude de respaldo" que ya usa runWithFallback.
 async function runInterviewModelTurn(session) {
+  const onSpawn = (child) => interviewChildren.set(session.id, child);
   const geminiPrompt = buildInterviewTurnPrompt(session, { strictJsonInstruction: false });
   const gemini = await execCapture(AGY_BIN, [
     "-p", geminiPrompt,
@@ -1042,7 +1045,7 @@ async function runInterviewModelTurn(session) {
     "--json-schema", INTERVIEW_JSON_SCHEMA,
     "--output-format", "json",
     "--dangerously-skip-permissions",
-  ], { timeoutMs: 120000 });
+  ], { timeoutMs: 120000, onSpawn });
   if (gemini.code === 0) {
     try {
       const parsed = JSON.parse(gemini.out);
@@ -1053,8 +1056,10 @@ async function runInterviewModelTurn(session) {
     console.error(`[interview] agy falló (code ${gemini.code}): ${(gemini.err || "").slice(0, 300)}`);
   }
 
+  if (interviewJobs.get(session.id)?.status === "cancelled") throw new Error("cancelado");
+
   const claudePrompt = buildInterviewTurnPrompt(session, { strictJsonInstruction: true });
-  const claude = await execCapture(CLAUDE_BIN, ["-p", claudePrompt, "--permission-mode", "dontAsk"], { timeoutMs: 90000 });
+  const claude = await execCapture(CLAUDE_BIN, ["-p", claudePrompt, "--permission-mode", "dontAsk"], { timeoutMs: 90000, onSpawn });
   // Igual que en recallInterviewMemory: un hook de SessionEnd puede dejar
   // exit 1 con stdout perfectamente válido — solo tratar como error real
   // cuando no hay nada que parsear.
@@ -1078,6 +1083,7 @@ async function runInterviewTurn(sessionId) {
     }
 
     const { turn, provider } = await runInterviewModelTurn(session);
+    if (interviewJobs.get(sessionId)?.status === "cancelled") return; // turno cancelado, ignorar resultado tardío
 
     list = loadInterviews();
     session = findInterview(list, sessionId);
@@ -1101,7 +1107,10 @@ async function runInterviewTurn(sessionId) {
     if (turn.done) await saveInterviewMemory(session).catch(() => {});
     interviewJobs.set(sessionId, { status: "done", error: null });
   } catch (e) {
+    if (interviewJobs.get(sessionId)?.status === "cancelled") return; // ya cancelado, no pisar ese estado con un error
     interviewJobs.set(sessionId, { status: "error", error: String(e.message || e) });
+  } finally {
+    interviewChildren.delete(sessionId);
   }
 }
 
@@ -1703,6 +1712,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/providers" && req.method === "GET") {
+      const grokCli = GROK_BIN !== "grok" && fs.existsSync(GROK_BIN);
+      const claudeCli = CLAUDE_BIN !== "claude" && fs.existsSync(CLAUDE_BIN);
+      let ideasLatest = null, statusLatest = null;
+      try { ideasLatest = JSON.parse(fs.readFileSync(IDEAS_FILE, "utf8"))[0] || null; } catch {}
+      try { statusLatest = JSON.parse(fs.readFileSync(PROJECT_STATUS_FILE, "utf8")); } catch {}
+      const candidates = [
+        ideasLatest && { action: "ideas", provider: ideasLatest.provider, at: ideasLatest.generatedAt },
+        statusLatest?.generatedAt && { action: "estado", provider: statusLatest.provider, at: statusLatest.generatedAt },
+      ].filter(Boolean).sort((a, b) => new Date(b.at) - new Date(a.at));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ grokCli, claudeCli, lastGeneration: candidates[0] || null }));
+      return;
+    }
+
     if (url.pathname === "/api/ideas" && req.method === "GET") {
       let store = [];
       try { store = JSON.parse(fs.readFileSync(IDEAS_FILE, "utf8")); } catch {}
@@ -1864,6 +1888,17 @@ const server = http.createServer(async (req, res) => {
       saveInterviews(list);
       runInterviewTurn(id);
       res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (url.pathname === "/api/interview/cancel" && req.method === "POST") {
+      const id = url.searchParams.get("id");
+      const child = interviewChildren.get(id);
+      if (child) { try { child.kill("SIGKILL"); } catch {} }
+      interviewChildren.delete(id);
+      interviewJobs.set(id, { status: "cancelled", error: null });
+      res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
       return;
     }

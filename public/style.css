@@ -644,7 +644,8 @@ main.is-loading > *:not(.toolbar):not(.hero) { opacity: 0.4; pointer-events: non
   color: var(--ink); margin-right: var(--sp-2);
 }
 
-.interview-widget { position: fixed; left: 1.5rem; bottom: 1.5rem; z-index: 500; }
+.interview-widget { position: fixed; left: 1.5rem; bottom: 1.5rem; z-index: 1100; }
+.interview-cancel-btn { background: var(--crit-soft); color: var(--crit); border-color: var(--crit); }
 .interview-bubble {
   width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
   background: var(--ink); color: var(--bg); font-size: 1.5rem; line-height: 1;
@@ -704,6 +705,11 @@ main.is-loading > *:not(.toolbar):not(.hero) { opacity: 0.4; pointer-events: non
 .idea-verdict.good { color: var(--ok); background: var(--ok-soft); }
 .idea-verdict.mixed { color: var(--warn); background: var(--warn-soft); }
 .idea-verdict.bad { color: var(--crit); background: var(--crit-soft); }
+.provider-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 0.2rem 0.45rem; border-radius: var(--r-1); white-space: nowrap; border: var(--line) solid var(--border); color: var(--muted);
+  display: inline-block; margin-left: var(--sp-2);
+}
 
 /* ── Project modal markdown ─────────────────────────────────────────── */
 #projectModalBody h1, #projectModalBody h2 { font-size: 1rem; font-weight: 700; margin: var(--sp-5) 0 var(--sp-2); border-bottom: var(--line) solid var(--border); padding-bottom: var(--sp-1); }

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Claude Dashboard — Uso, costos y skills de David Gallo</title>
-<meta name="description" content="Tablero local de uso de Claude Code: tokens, costos estimados, actividad, skills instaladas y servidores MCP a través de las cuentas personal y de empresa." />
+<meta name="description" content="Tablero local de uso de Claude Code: tokens, costos estimados, actividad, skills instaladas y servidores MCP a través de las cuentas personal y de empresa. Los generadores de ideas y análisis usan Grok primero, con Claude como respaldo." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -38,9 +38,10 @@
         <span class="hero-float-sub" id="heroFloatSub"></span>
       </div>
     </div>
-    <p class="subhead">Resumen combinado de tu cuenta <strong>personal</strong> y tu cuenta de <strong>empresa</strong>: tokens, costos, sesiones, modelos, skills y MCP.</p>
+    <p class="subhead">Resumen combinado de tu cuenta <strong>personal</strong> y tu cuenta de <strong>empresa</strong>: tokens, costos, sesiones, modelos, skills y MCP. Los generadores de ideas y análisis (ideas-ia, mis-proyectos, CLAUDE.md) corren primero en <strong>Grok</strong>, con <strong>Claude</strong> como respaldo automático.</p>
     <div class="hero-bottom-row">
       <span class="hero-meta">localhost:4949</span>
+      <span class="hero-meta" id="providerStatus"></span>
     </div>
   </header>
   <span class="hero-vertical" aria-hidden="true">EN VIVO ↗</span>
@@ -332,6 +333,7 @@
 
       <div class="ideas-toolbar">
         <button id="interviewStart" class="graphify-update-btn">Nueva entrevista</button>
+        <button id="interviewCancelBtn" class="graphify-update-btn interview-cancel-btn" hidden>Cancelar</button>
         <span id="interviewStatus" class="graphify-status"></span>
       </div>
 
