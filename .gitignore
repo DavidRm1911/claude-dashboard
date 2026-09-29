@@ -1,0 +1,16 @@
+# OKF (schema.org JSON-LD) descriptor — local only, never pushed
+.claude/okf.jsonld
+.grok-handoff/
+.impeccable/hook.cache.json
+graphify-out/
+.local-data/
+node_modules/
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+tools/video/node_modules/
+*.webm
+*.log
+.DS_Store

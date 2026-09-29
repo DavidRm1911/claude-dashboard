@@ -1,0 +1,18 @@
+{
+  "name": "claude-dashboard",
+  "version": "1.4.0",
+  "license": "MIT",
+  "author": "David Gallo",
+  "repository": { "type": "git", "url": "https://github.com/DavidRm1911/claude-dashboard.git" },
+  "private": true,
+  "type": "module",
+  "description": "Dashboard local de Claude Code, Codex, Grok y Antigravity CLI: uso registrado, sesiones, proyectos y entorno.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "start:config": "node --env-file=.env.local server.js",
+    "demo": "node scripts/demo.mjs",
+    "test": "node --test test/*.test.js"
+  }
+}
