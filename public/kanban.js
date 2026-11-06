@@ -3,7 +3,7 @@
   const names = { david: 'David', claude: 'Claude', codex: 'Codex', grok: 'Grok', agy: 'Antigravity' };
   const states = { backlog: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Listo' };
   const priorities = { high: 'Alta', medium: 'Media', low: 'Baja' };
-  let data = { tasks: [] }, projects = [], editing = null, suggestions = [], dragId = null, saving = false;
+  let data = { tasks: [] }, projects = [], editing = null, suggestions = [], dragId = null, saving = false, viewMode = 'general';
   const e = typeof escapeHtml === 'function' ? escapeHtml : (s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const mark = typeof providerMark === 'function' ? providerMark : (() => '');
   const feedback = message => { $('boardFeedback').textContent = message; };
@@ -34,6 +34,47 @@
     if (exportBtn) exportBtn.before(btn);
     else actions.prepend(btn);
     btn.addEventListener('click', syncMem0);
+  }
+
+  function ensureViewToggle() {
+    if ($('boardViewToggle')) return;
+    const summary = $('boardSummary');
+    if (!summary) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'boardViewToggle';
+    wrap.className = 'board-view-toggle';
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', 'Vista del tablero');
+    wrap.innerHTML = `
+      <button type="button" class="ghost-btn" data-view="general" aria-pressed="true">General</button>
+      <button type="button" class="ghost-btn" data-view="projects" aria-pressed="false">Por proyectos</button>`;
+    summary.before(wrap);
+    wrap.addEventListener('click', event => {
+      const btn = event.target.closest('[data-view]');
+      if (!btn) return;
+      viewMode = btn.dataset.view === 'projects' ? 'projects' : 'general';
+      wrap.querySelectorAll('[data-view]').forEach(b => {
+        b.setAttribute('aria-pressed', String(b.dataset.view === viewMode));
+      });
+      render();
+    });
+  }
+
+  function ensureBoardHealth() {
+    if ($('boardHealth')) return;
+    const summary = $('boardSummary');
+    if (!summary) return;
+    const el = document.createElement('div');
+    el.id = 'boardHealth';
+    el.className = 'board-health';
+    el.setAttribute('aria-label', 'Cómo va en todos los proyectos');
+    summary.after(el);
+    el.addEventListener('click', event => {
+      const chip = event.target.closest('[data-project-chip]');
+      if (!chip) return;
+      $('boardProject').value = chip.dataset.projectChip;
+      render();
+    });
   }
 
   function limaToday() {
@@ -68,22 +109,114 @@
     return namesList.map(name => `<option value="${e(name)}" ${name === selected ? 'selected' : ''}>${e(name)}</option>`).join('');
   }
 
+  function filteredTasks(selectedProject) {
+    const selected = selectedProject === undefined ? $('boardProject').value : selectedProject;
+    const agent = $('boardAgent').value;
+    const archived = $('boardArchived').checked;
+    const q = $('boardSearch').value.toLocaleLowerCase();
+    return data.tasks.filter(t =>
+      t.archived === archived
+      && (!selected || t.project === selected)
+      && (!agent || t.agent === agent)
+      && `${t.title} ${t.description} ${t.handoff} ${t.project} ${t.nextAction || ''} ${t.blocker || ''}`.toLocaleLowerCase().includes(q)
+    );
+  }
+
+  function sortColumn(list) {
+    return list.slice().sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] - { high: 0, medium: 1, low: 2 }[b.priority]) || b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  function cardHtml(t) {
+    return `<article class="board-task" data-id="${t.id}" draggable="${!t.archived}" aria-label="${e(t.title)}"><div class="task-meta"><span>${e(t.project)}</span><span class="task-meta-flags"><span class="task-priority ${t.priority}">${priorities[t.priority]}</span>${t.blocker ? `<span class="task-blocker" title="${e(t.blocker)}">Bloqueo</span>` : ''}${dueMeta(t)}</span></div><button class="task-title" data-edit="${t.id}">${e(t.title)}</button>${t.nextAction ? `<p class="task-next">${e(t.nextAction.slice(0, 160))}</p>` : t.description ? `<p>${e(t.description.slice(0, 140))}</p>` : ''}<div class="task-owner">${mark(t.agent)}<span>${names[t.agent]}</span>${t.handoff ? '<span class="task-context">Contexto listo</span>' : ''}</div><div class="task-card-actions"><label class="sr-only" for="move-${t.id}">Mover ${e(t.title)}</label><select id="move-${t.id}" data-move="${t.id}" ${t.archived ? 'disabled' : ''}>${Object.entries(states).map(([key, value]) => `<option value="${key}" ${key === t.status ? 'selected' : ''}>${value}</option>`).join('')}</select><button class="ghost-btn" data-brief="${t.id}" aria-label="Copiar contexto de ${e(t.title)}">Copiar entrega ↗</button>${t.archived ? `<button class="ghost-btn" data-restore="${t.id}">Restaurar</button>` : ''}</div></article>`;
+  }
+
+  function columnsHtml(tasks, { compact = false } = {}) {
+    return Object.entries(states).map(([status, label]) => {
+      const column = sortColumn(tasks.filter(t => t.status === status));
+      const empty = compact
+        ? `<div class="board-empty compact"><p>Sin tareas</p></div>`
+        : `<div class="board-empty"><span aria-hidden="true">${status === 'done' ? '✓' : '·'}</span><p>${status === 'backlog' ? 'Tu siguiente mejora empieza aquí.' : status === 'doing' ? 'Enfócate en una tarea a la vez.' : status === 'review' ? 'Comprueba criterios y pruebas.' : 'Las entregas aparecerán aquí.'}</p><button class="ghost-btn" data-add="${status}">Añadir tarea</button></div>`;
+      return `<section class="board-column${compact ? ' compact' : ''}" data-status="${status}" aria-label="${label}"><header><span class="board-state-dot ${status}" aria-hidden="true"></span><h3>${label}</h3><span>${column.length}</span>${compact ? '' : `<button class="ghost-btn column-add" data-add="${status}" aria-label="Añadir tarea a ${label}">＋</button>`}</header><div class="board-card-list">${column.length ? column.map(cardHtml).join('') : empty}</div></section>`;
+    }).join('');
+  }
+
+  function projectCounts(list) {
+    return {
+      backlog: list.filter(t => t.status === 'backlog').length,
+      doing: list.filter(t => t.status === 'doing').length,
+      review: list.filter(t => t.status === 'review').length,
+      done: list.filter(t => t.status === 'done').length,
+    };
+  }
+
+  function renderHealth() {
+    const health = $('boardHealth');
+    if (!health) return;
+    if (viewMode !== 'general') {
+      health.hidden = true;
+      health.innerHTML = '';
+      return;
+    }
+    health.hidden = false;
+    const active = data.tasks.filter(t => !t.archived);
+    const namesList = [...new Set(active.map(t => t.project).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+    if (!namesList.length) {
+      health.innerHTML = '<span class="board-health-empty">Aún no hay proyectos activos</span>';
+      return;
+    }
+    const selected = $('boardProject').value;
+    health.innerHTML = namesList.map(name => {
+      const list = active.filter(t => t.project === name);
+      const c = projectCounts(list);
+      const label = `${name} ${c.doing}·${c.backlog}`;
+      const pressed = selected === name;
+      return `<button type="button" class="board-health-chip${pressed ? ' active' : ''}" data-project-chip="${e(name)}" aria-pressed="${pressed}" title="${e(name)}: ${c.doing} en curso, ${c.backlog} por hacer, ${c.review} en revisión, ${c.done} listo">${e(label)}</button>`;
+    }).join('');
+  }
+
   function render() {
     ensureExtraFields();
     ensureSyncButton();
+    ensureViewToggle();
+    ensureBoardHealth();
     const selected = $('boardProject').value;
     $('boardProject').innerHTML = '<option value="">Todos mis proyectos</option>' + options(selected);
-    const tasks = data.tasks.filter(t => t.archived === $('boardArchived').checked && (!selected || t.project === selected) && (!$('boardAgent').value || t.agent === $('boardAgent').value) && `${t.title} ${t.description} ${t.handoff} ${t.project} ${t.nextAction || ''} ${t.blocker || ''}`.toLocaleLowerCase().includes($('boardSearch').value.toLocaleLowerCase()));
-    const backlogN = tasks.filter(t => t.status === 'backlog').length;
-    const doingN = tasks.filter(t => t.status === 'doing').length;
-    const reviewN = tasks.filter(t => t.status === 'review').length;
-    const doneN = tasks.filter(t => t.status === 'done').length;
+    const toggle = $('boardViewToggle');
+    if (toggle) {
+      toggle.querySelectorAll('[data-view]').forEach(b => {
+        b.setAttribute('aria-pressed', String(b.dataset.view === viewMode));
+      });
+    }
+    const tasks = filteredTasks();
+    const c = projectCounts(tasks);
     const missing = tasks.filter(t => t.status !== 'done' && !t.acceptance).length;
-    $('boardSummary').innerHTML = `<span><strong>${backlogN}</strong> por hacer</span><span><strong>${doingN}</strong> en curso</span><span><strong>${reviewN}</strong> en revisión</span><span><strong>${doneN}</strong> listo</span><span class="board-summary-tip">${missing ? `${missing} tareas aún necesitan criterios de aceptación` : 'Filtra por proyecto arriba'}</span>`;
-    $('boardColumns').innerHTML = Object.entries(states).map(([status, label]) => {
-      const column = tasks.filter(t => t.status === status).sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] - { high: 0, medium: 1, low: 2 }[b.priority]) || b.updatedAt.localeCompare(a.updatedAt));
-      return `<section class="board-column" data-status="${status}" aria-label="${label}"><header><span class="board-state-dot ${status}" aria-hidden="true"></span><h3>${label}</h3><span>${column.length}</span><button class="ghost-btn column-add" data-add="${status}" aria-label="Añadir tarea a ${label}">＋</button></header><div class="board-card-list">${column.length ? column.map(t => `<article class="board-task" data-id="${t.id}" draggable="${!t.archived}" aria-label="${e(t.title)}"><div class="task-meta"><span>${e(t.project)}</span><span class="task-meta-flags"><span class="task-priority ${t.priority}">${priorities[t.priority]}</span>${t.blocker ? `<span class="task-blocker" title="${e(t.blocker)}">Bloqueo</span>` : ''}${dueMeta(t)}</span></div><button class="task-title" data-edit="${t.id}">${e(t.title)}</button>${t.nextAction ? `<p class="task-next">${e(t.nextAction.slice(0, 160))}</p>` : t.description ? `<p>${e(t.description.slice(0, 140))}</p>` : ''}<div class="task-owner">${mark(t.agent)}<span>${names[t.agent]}</span>${t.handoff ? '<span class="task-context">Contexto listo</span>' : ''}</div><div class="task-card-actions"><label class="sr-only" for="move-${t.id}">Mover ${e(t.title)}</label><select id="move-${t.id}" data-move="${t.id}" ${t.archived ? 'disabled' : ''}>${Object.entries(states).map(([key, value]) => `<option value="${key}" ${key === t.status ? 'selected' : ''}>${value}</option>`).join('')}</select><button class="ghost-btn" data-brief="${t.id}" aria-label="Copiar contexto de ${e(t.title)}">Copiar entrega ↗</button>${t.archived ? `<button class="ghost-btn" data-restore="${t.id}">Restaurar</button>` : ''}</div></article>`).join('') : `<div class="board-empty"><span aria-hidden="true">${status === 'done' ? '✓' : '·'}</span><p>${status === 'backlog' ? 'Tu siguiente mejora empieza aquí.' : status === 'doing' ? 'Enfócate en una tarea a la vez.' : status === 'review' ? 'Comprueba criterios y pruebas.' : 'Las entregas aparecerán aquí.'}</p><button class="ghost-btn" data-add="${status}">Añadir tarea</button></div>`}</div></section>`;
-    }).join('');
+    $('boardSummary').innerHTML = `<span><strong>${c.backlog}</strong> por hacer</span><span><strong>${c.doing}</strong> en curso</span><span><strong>${c.review}</strong> en revisión</span><span><strong>${c.done}</strong> listo</span><span class="board-summary-tip">${missing ? `${missing} tareas aún necesitan criterios de aceptación` : 'Filtra por proyecto arriba'}</span>`;
+    renderHealth();
+    const board = $('boardColumns');
+    if (viewMode === 'projects') {
+      board.classList.add('by-project');
+      const agent = $('boardAgent').value;
+      const archived = $('boardArchived').checked;
+      const q = $('boardSearch').value.toLocaleLowerCase();
+      const pool = data.tasks.filter(t =>
+        t.archived === archived
+        && (!agent || t.agent === agent)
+        && (!selected || t.project === selected)
+        && `${t.title} ${t.description} ${t.handoff} ${t.project} ${t.nextAction || ''} ${t.blocker || ''}`.toLocaleLowerCase().includes(q)
+      );
+      const namesList = [...new Set(pool.map(t => t.project).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+      board.innerHTML = namesList.length
+        ? namesList.map(name => {
+            const list = pool.filter(t => t.project === name);
+            if (!list.length) return '';
+            const pc = projectCounts(list);
+            return `<section class="board-project-section" data-project="${e(name)}"><header class="board-project-header"><h3>${e(name)}</h3><span>${pc.doing} en curso · ${pc.backlog} por hacer · ${pc.review} revisión · ${pc.done} listo</span></header><div class="board-columns compact">${columnsHtml(list, { compact: true })}</div></section>`;
+          }).join('')
+        : `<div class="board-empty"><p>No hay proyectos con tareas para estos filtros.</p></div>`;
+    } else {
+      board.classList.remove('by-project');
+      board.innerHTML = columnsHtml(tasks);
+    }
   }
 
   async function load() {
@@ -132,9 +265,16 @@
       const result = await api('/api/kanban/sync-mem0', {});
       data = result;
       render();
-      feedback(result.meta?.source === 'offline'
-        ? `mem0 local offline. Sin cambios (${result.meta.updated || 0} actualizadas).`
-        : `mem0: ${result.meta?.updated || 0} actualizadas, ${result.meta?.skipped || 0} sin cambio.`);
+      const meta = result.meta || {};
+      if (meta.source === 'offline') {
+        feedback(`mem0 local offline. Sin cambios (${meta.updated || 0} actualizadas).`);
+      } else {
+        const parts = [];
+        if (meta.created > 0) parts.push(`Creé ${meta.created} tareas nuevas desde mem0`);
+        if (meta.updated > 0) parts.push(`${meta.updated} actualizadas`);
+        if (!parts.length) parts.push(`sin cambios (${meta.skipped || 0} omitidas)`);
+        feedback(parts.join('. ') + '.');
+      }
     } catch (error) {
       const msg = error.message || 'No se pudo completar la solicitud';
       feedback(/404|No se pudo completar/i.test(msg) ? `${msg} ¿Reiniciaste el dashboard?` : msg);
@@ -248,6 +388,8 @@
   document.addEventListener('dashboard:tier', event => { if (event.detail === 'kanban') load(); });
   ensureExtraFields();
   ensureSyncButton();
+  ensureViewToggle();
+  ensureBoardHealth();
   Promise.all([api('/api/kanban'), api('/api/projects')]).then(([board, repos]) => {
     data = board; projects = repos.filter(p => p.org === 'personal');
     $('planProject').innerHTML = options();

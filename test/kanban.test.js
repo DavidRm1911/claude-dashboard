@@ -139,6 +139,7 @@ test('syncFromMem0 fills empty fields only; offline safe', async t => {
   const result = await syncFromMem0(store, { fetchImpl });
   assert.equal(result.source, 'mem0');
   assert.ok(result.updated >= 1);
+  assert.equal(typeof result.created, 'number');
   const tasks = Object.fromEntries(store.get().tasks.map(t => [t.title, t]));
   assert.equal(tasks.Kept.nextAction, 'Ya escrito por David');
   assert.ok(tasks.Empty.nextAction);
@@ -151,6 +152,7 @@ test('syncFromMem0 fills empty fields only; offline safe', async t => {
 
   const offline = await syncFromMem0(store, { fetchImpl: async () => { throw new Error('down'); } });
   assert.equal(offline.source, 'offline');
+  assert.equal(offline.created, 0);
 });
 
 test('seed-projects creates then updates idempotently without wiping fields', t => {
@@ -179,3 +181,73 @@ test('seed-projects creates then updates idempotently without wiping fields', t 
   assert.equal(after.Jev.blocker, 'Esperando OK');
   assert.equal(store.get().tasks.filter(t => t.project === 'EcoMovil' && !t.archived).length, 1);
 });
+
+test('syncFromMem0 creates actionable tasks once then stays idempotent', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanban-sync-create-')); t.after(() => fs.rmSync(dir, { recursive: true }));
+  const store = createKanbanStore({ dataDir: dir });
+  store.mutate({
+    action: 'create',
+    task: { ...task, title: 'Base escuela', project: 'escuela', nextAction: 'Ya escrito', blocker: '', description: 'Base' },
+  });
+  store.mutate({
+    action: 'create',
+    task: { ...task, title: 'Otro', project: 'Jev', nextAction: 'Seguir el piloto actual', blocker: '' },
+  });
+
+  const points = [
+    { id: 1, payload: { data: 'escuela: pendiente arreglar login de padres esta semana.', updated_at: '2026-11-04' } },
+    { id: 2, payload: { data: 'nota sin proyecto accionable sobre el clima', updated_at: '2026-11-05' } },
+    { id: 3, payload: { data: 'Jev blocker: falta API key del router. Debe reiniciarse el piloto.', updated_at: '2026-11-06' } },
+  ];
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({ result: { points } }),
+  });
+
+  const first = await syncFromMem0(store, { fetchImpl });
+  assert.equal(first.source, 'mem0');
+  assert.ok(first.created >= 2);
+  const afterFirst = store.get().tasks;
+  const escuelaNew = afterFirst.filter(t => t.project === 'escuela' && t.title !== 'Base escuela');
+  assert.equal(escuelaNew.length, 1);
+  assert.equal(escuelaNew[0].agent, 'david');
+  assert.equal(escuelaNew[0].status, 'backlog');
+  assert.equal(escuelaNew[0].priority, 'medium');
+  assert.match(escuelaNew[0].handoff, /^mem0:/);
+  assert.equal(afterFirst.find(t => t.title === 'Base escuela').nextAction, 'Ya escrito');
+
+  const jevBlock = afterFirst.find(t => t.project === 'Jev' && String(t.handoff || '').startsWith('mem0:'));
+  assert.ok(jevBlock);
+  assert.equal(jevBlock.status, 'doing');
+  assert.equal(jevBlock.priority, 'high');
+  assert.ok(jevBlock.blocker);
+  assert.match(jevBlock.title + jevBlock.nextAction, /API key|blocker|piloto/i);
+
+  const countAfterFirst = afterFirst.length;
+  const second = await syncFromMem0(store, { fetchImpl });
+  assert.equal(second.created, 0);
+  assert.equal(store.get().tasks.length, countAfterFirst);
+});
+
+test('syncFromMem0 create respects knownProjects and maxCreate; skips non-actionable', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kanban-sync-cap-')); t.after(() => fs.rmSync(dir, { recursive: true }));
+  const store = createKanbanStore({ dataDir: dir });
+  // no store tasks for Phantom; only via knownProjects
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({
+      result: {
+        points: [
+          { id: 1, payload: { data: 'Phantom: implementar sync de fotos. Próximo: subir manifiesto.', updated_at: '2026-11-03' } },
+          { id: 2, payload: { data: 'Phantom solo una mención sin verbo accionable claro', updated_at: '2026-11-04' } },
+        ],
+      },
+    }),
+  });
+  const none = await syncFromMem0(store, { fetchImpl });
+  assert.equal(none.created, 0);
+  const withKnown = await syncFromMem0(store, { fetchImpl, knownProjects: ['Phantom'], maxCreate: 1 });
+  assert.equal(withKnown.created, 1);
+  assert.equal(store.get().tasks.filter(t => t.project === 'Phantom').length, 1);
+});
+

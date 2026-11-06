@@ -100,3 +100,33 @@ body.motion-paused::before,body.page-hidden::before { animation-play-state:pause
 .task-extra-fields { display: grid; gap: 12px; }
 
 #boardSyncMem0[aria-busy="true"] { opacity: .7; cursor: wait; }
+
+
+/* vistas General / Por proyectos + health (kanban mem0 create-views) */
+.board-view-toggle { display:inline-flex; gap:6px; margin:14px 0 0; padding:4px; border:1px solid var(--border); border-radius:8px; width:fit-content; }
+.board-view-toggle .ghost-btn { padding:7px 12px; font-size:12px; border-radius:6px; }
+.board-view-toggle .ghost-btn[aria-pressed="true"] { background:color-mix(in srgb,var(--accent) 14%,var(--surface)); color:var(--ink); border-color:var(--accent); }
+.board-health { display:flex; flex-wrap:wrap; gap:8px; padding:14px 0 4px; }
+.board-health-empty { font-size:12px; color:var(--muted); }
+.board-health-chip { appearance:none; border:1px solid var(--border); background:var(--surface); color:var(--muted); border-radius:999px; padding:6px 11px; font:inherit; font-size:11px; cursor:pointer; }
+.board-health-chip.active, .board-health-chip[aria-pressed="true"] { color:var(--ink); border-color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,transparent); }
+#boardColumns.by-project { display:grid; gap:28px; grid-template-columns:1fr; }
+.board-project-section { border:1px solid var(--border); border-radius:10px; padding:12px 12px 14px; background:color-mix(in srgb,var(--surface) 55%,transparent); }
+.board-project-header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; padding:4px 2px 10px; border-bottom:1px solid var(--border); }
+.board-project-header h3 { margin:0; font-size:15px; font-weight:600; }
+.board-project-header span { font-size:11px; color:var(--muted); }
+.board-project-section .board-columns.compact { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.board-column.compact { min-height:0; padding:0 4px 4px; }
+.board-column.compact > header { padding:10px 2px; }
+.board-empty.compact { padding:16px 8px; }
+.board-empty.compact p { margin:0; font-size:11px; }
+@media(max-width:1000px) {
+  .board-project-section .board-columns.compact { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:600px) {
+  .board-view-toggle { width:100%; }
+  .board-view-toggle .ghost-btn { flex:1; }
+  .board-project-section { padding:10px; }
+  .board-project-section .board-columns.compact { grid-template-columns:1fr; }
+  .board-health { gap:6px; }
+}
