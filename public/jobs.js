@@ -23,7 +23,8 @@
     const warn = rk?.stale
       ? ` <span class="radar-badge warning">${esc(`Ranking desactualizado: último puntaje ${rk.ageDays != null ? `hace ${rk.ageDays} días` : "desconocido"}${rk.lastRankDate ? ` (${rk.lastRankDate.slice(0, 10)})` : ""}${rk.lastRankRun?.ok === false ? " · último intento falló" : ""}`)}</span>`
       : "";
-    $("jobsSync").innerHTML = esc(run) + warn;
+    const dup = s.duplicatesHidden > 0 ? ` · ${s.duplicatesHidden} ${s.duplicatesHidden === 1 ? "duplicada oculta" : "duplicadas ocultas"}` : "";
+    $("jobsSync").innerHTML = esc(run + dup) + warn;
     $("jobsStats").innerHTML = [
       [s.high, "con 70+ para ti"], [s.open, "puntuadas abiertas"], [s.toApply, "marcadas para postular"],
       [s.backlog, "en cola por puntuar"], [s.seenTotal, "ofertas vistas (nunca se repiten)"], [s.drafted + s.applied, "redactadas / enviadas"],
@@ -53,6 +54,7 @@
       <article class="radar-item jobs-item" data-key="${esc(j.key)}">
         <div class="radar-item-main">
           <div class="radar-item-kicker"><span class="jobs-ref">#${j.ref}</span><span class="radar-badge ${scoreClass(j.score)}">${j.score ?? "?"}/100</span>
+            ${j.closingSoon ? '<span class="radar-badge warning">Cierra pronto</span>' : ""}
             ${j.stretch ? '<span class="radar-badge warning">Pide más años</span>' : ""}
             ${j.locationVerdict === "FLAG" ? '<span class="radar-badge warning">Verificar ubicación</span>' : ""}
             ${j.locationVerdict === "FAIL" ? '<span class="radar-badge warning">Ubicación no elegible</span>' : ""}
