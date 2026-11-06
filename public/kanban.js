@@ -74,9 +74,12 @@
     const selected = $('boardProject').value;
     $('boardProject').innerHTML = '<option value="">Todos mis proyectos</option>' + options(selected);
     const tasks = data.tasks.filter(t => t.archived === $('boardArchived').checked && (!selected || t.project === selected) && (!$('boardAgent').value || t.agent === $('boardAgent').value) && `${t.title} ${t.description} ${t.handoff} ${t.project} ${t.nextAction || ''} ${t.blocker || ''}`.toLocaleLowerCase().includes($('boardSearch').value.toLocaleLowerCase()));
-    const active = tasks.filter(t => t.status !== 'done');
-    const missing = active.filter(t => !t.acceptance).length;
-    $('boardSummary').innerHTML = `<span><strong>${active.length}</strong> pendientes</span><span><strong>${tasks.filter(t => t.status === 'doing').length}</strong> en curso</span><span><strong>${tasks.filter(t => t.status === 'done').length}</strong> entregadas</span><span class="board-summary-tip">${missing ? `${missing} tareas aún necesitan criterios de aceptación` : 'Cada entrega deja una base para la siguiente mejora'}</span>`;
+    const backlogN = tasks.filter(t => t.status === 'backlog').length;
+    const doingN = tasks.filter(t => t.status === 'doing').length;
+    const reviewN = tasks.filter(t => t.status === 'review').length;
+    const doneN = tasks.filter(t => t.status === 'done').length;
+    const missing = tasks.filter(t => t.status !== 'done' && !t.acceptance).length;
+    $('boardSummary').innerHTML = `<span><strong>${backlogN}</strong> por hacer</span><span><strong>${doingN}</strong> en curso</span><span><strong>${reviewN}</strong> en revisión</span><span><strong>${doneN}</strong> listo</span><span class="board-summary-tip">${missing ? `${missing} tareas aún necesitan criterios de aceptación` : 'Filtra por proyecto arriba'}</span>`;
     $('boardColumns').innerHTML = Object.entries(states).map(([status, label]) => {
       const column = tasks.filter(t => t.status === status).sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] - { high: 0, medium: 1, low: 2 }[b.priority]) || b.updatedAt.localeCompare(a.updatedAt));
       return `<section class="board-column" data-status="${status}" aria-label="${label}"><header><span class="board-state-dot ${status}" aria-hidden="true"></span><h3>${label}</h3><span>${column.length}</span><button class="ghost-btn column-add" data-add="${status}" aria-label="Añadir tarea a ${label}">＋</button></header><div class="board-card-list">${column.length ? column.map(t => `<article class="board-task" data-id="${t.id}" draggable="${!t.archived}" aria-label="${e(t.title)}"><div class="task-meta"><span>${e(t.project)}</span><span class="task-meta-flags"><span class="task-priority ${t.priority}">${priorities[t.priority]}</span>${t.blocker ? `<span class="task-blocker" title="${e(t.blocker)}">Bloqueo</span>` : ''}${dueMeta(t)}</span></div><button class="task-title" data-edit="${t.id}">${e(t.title)}</button>${t.nextAction ? `<p class="task-next">${e(t.nextAction.slice(0, 160))}</p>` : t.description ? `<p>${e(t.description.slice(0, 140))}</p>` : ''}<div class="task-owner">${mark(t.agent)}<span>${names[t.agent]}</span>${t.handoff ? '<span class="task-context">Contexto listo</span>' : ''}</div><div class="task-card-actions"><label class="sr-only" for="move-${t.id}">Mover ${e(t.title)}</label><select id="move-${t.id}" data-move="${t.id}" ${t.archived ? 'disabled' : ''}>${Object.entries(states).map(([key, value]) => `<option value="${key}" ${key === t.status ? 'selected' : ''}>${value}</option>`).join('')}</select><button class="ghost-btn" data-brief="${t.id}" aria-label="Copiar contexto de ${e(t.title)}">Copiar entrega ↗</button>${t.archived ? `<button class="ghost-btn" data-restore="${t.id}">Restaurar</button>` : ''}</div></article>`).join('') : `<div class="board-empty"><span aria-hidden="true">${status === 'done' ? '✓' : '·'}</span><p>${status === 'backlog' ? 'Tu siguiente mejora empieza aquí.' : status === 'doing' ? 'Enfócate en una tarea a la vez.' : status === 'review' ? 'Comprueba criterios y pruebas.' : 'Las entregas aparecerán aquí.'}</p><button class="ghost-btn" data-add="${status}">Añadir tarea</button></div>`}</div></section>`;
@@ -91,23 +94,37 @@
   async function mutate(body, message = 'Guardado en tu equipo') {
     if (saving) return false;
     saving = true;
+    feedback('Guardando…');
+    if ($('taskDialog')?.open) $('taskFeedback').textContent = 'Guardando…';
+    const saveBtn = $('taskSave');
+    if (saveBtn) saveBtn.disabled = true;
     try {
       const available = data.plannerAvailable;
       data = await api('/api/kanban', body);
       data.plannerAvailable = available;
       render();
       feedback(message);
+      if ($('taskDialog')?.open) $('taskFeedback').textContent = '';
       return true;
     } catch (error) {
       feedback(error.message);
       $('taskFeedback').textContent = error.message;
       return false;
-    } finally { saving = false; }
+    } finally {
+      saving = false;
+      if (saveBtn) saveBtn.disabled = false;
+    }
   }
 
   async function syncMem0() {
     const btn = $('boardSyncMem0');
-    if (btn) btn.disabled = true;
+    const label = 'Actualizar desde mem0';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Actualizando…';
+      btn.setAttribute('aria-busy', 'true');
+    }
+    feedback('Actualizando desde mem0…');
     try {
       const result = await api('/api/kanban/sync-mem0', {});
       data = result;
@@ -116,9 +133,14 @@
         ? `mem0 local offline. Sin cambios (${result.meta.updated || 0} actualizadas).`
         : `mem0: ${result.meta?.updated || 0} actualizadas, ${result.meta?.skipped || 0} sin cambio.`);
     } catch (error) {
-      feedback(error.message);
+      const msg = error.message || 'No se pudo completar la solicitud';
+      feedback(/404|No se pudo completar/i.test(msg) ? `${msg} ¿Reiniciaste el dashboard?` : msg);
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = label;
+        btn.removeAttribute('aria-busy');
+      }
     }
   }
 

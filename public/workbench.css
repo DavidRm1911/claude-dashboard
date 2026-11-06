@@ -98,3 +98,5 @@ body.motion-paused::before,body.page-hidden::before { animation-play-state:pause
 .task-blocker { font-size: 10px; letter-spacing: .02em; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .task-next { margin: 4px 0 12px; font-size: 12px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
 .task-extra-fields { display: grid; gap: 12px; }
+
+#boardSyncMem0[aria-busy="true"] { opacity: .7; cursor: wait; }
