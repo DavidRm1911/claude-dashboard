@@ -71,9 +71,9 @@
     const specs = [
       ["jobsPortal", "Portal", '<option value="">Todos</option>'],
       ["jobsLocation", "Ubicación", '<option value="">Todas</option>'],
-      ["jobsLang", "Idioma", '<option value="">Todas</option><option value="PASS">Pasa</option><option value="FLAG">Revisar</option><option value="FAIL">No apto</option>'],
+      ["jobsLang", "Idioma", '<option value="">Todos</option><option value="PASS">Pasa</option><option value="FLAG">Revisar</option><option value="FAIL">No apto</option>'],
       ["jobsRemote", "Remoto", '<option value="">Todos</option><option value="remote">Solo remoto</option><option value="onsite">Solo presencial/híbrido</option>'],
-      ["jobsPosted", "Fecha", '<option value="">Cualquiera</option><option value="7">Últimos 7 días</option><option value="14">Últimos 14</option><option value="30">Últimos 30</option>'],
+      ["jobsPosted", "Fecha", '<option value="">Cualquiera</option><option value="7">Últimos 7 días</option><option value="14">Últimos 14 días</option><option value="30">Últimos 30</option>'],
     ];
     for (const [id, label, options] of specs) {
       if ($(id)) continue;
