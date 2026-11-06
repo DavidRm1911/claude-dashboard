@@ -5,6 +5,9 @@ import os from "node:os";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createKanbanStore, taskBrief, syncFromMem0, seedProjects } from "./lib/kanban.js";
+import { createPlanner } from "./lib/planner.js";
+import { validateRequest, resolveProject, readJson } from "./lib/security.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -30,6 +33,7 @@ const NEO_GITHUB_DIR = path.join(HOME, "dev", "GITHUB-NEO");
 const OBSIDIAN_VAULT = path.join(HOME, "Documents", "obsidian-vault");
 const IDEAS_DIR = path.join(HOME, ".claude-dashboard");
 const IDEAS_FILE = path.join(IDEAS_DIR, "ideas.json");
+const kanbanStore = createKanbanStore({ dataDir: IDEAS_DIR });
 let ideasJob = { status: "idle", startedAt: null, finishedAt: null, error: null };
 
 // Luminance-separated (verified via WCAG relative-luminance contrast, not eyeballed) so
@@ -199,6 +203,7 @@ function resolveBin(name) {
 const CLAUDE_BIN = resolveBin("claude");
 const GROK_BIN = resolveBin("grok");
 const AGY_BIN = resolveBin("agy");
+const planTasks = createPlanner({ bin: CLAUDE_BIN, cwd: os.tmpdir() });
 
 function execCapture(cmd, args, { timeoutMs = 15000, input, cwd, onSpawn } = {}) {
   return new Promise((resolve) => {
@@ -1677,6 +1682,48 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
 
+    if (url.pathname.startsWith("/api/kanban")) {
+      const denied = validateRequest(req, PORT);
+      if (denied) { res.writeHead(denied, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Solicitud rechazada: usa la interfaz local del dashboard" })); return; }
+    }
+
+    if (url.pathname === "/api/kanban" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN) })); return;
+    }
+    if (url.pathname === "/api/kanban" && req.method === "POST") {
+      const body = await readJson(req);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(kanbanStore.mutate(body))); return;
+    }
+    if (url.pathname === "/api/kanban/sync-mem0" && req.method === "POST") {
+      const meta = await syncFromMem0(kanbanStore, {
+        qdrantUrl: process.env.MEM0_QDRANT_URL || "http://127.0.0.1:6333",
+        collection: process.env.MEM0_COLLECTION || "mem0_mcp_selfhosted",
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    }
+    if (url.pathname === "/api/kanban/seed-projects" && req.method === "POST") {
+      const body = await readJson(req, 65536);
+      const meta = seedProjects(kanbanStore, body.projects || []);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    }
+    if (url.pathname === "/api/kanban/brief" && req.method === "GET") {
+      const task = kanbanStore.get().tasks.find(t => t.id === url.searchParams.get("id"));
+      if (!task) throw Object.assign(new Error("Tarea no encontrada"), { status: 404 });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ text: taskBrief(task) })); return;
+    }
+    if (url.pathname === "/api/kanban/plan" && req.method === "POST") {
+      const body = await readJson(req, 8192);
+      const result = await planTasks({ project: body.project, goal: body.goal, tasks: kanbanStore.get().tasks });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result)); return;
+    }
+
+
     if (url.pathname === "/api/stats") {
       const days = url.searchParams.get("days");
       const account = url.searchParams.get("account");
@@ -2132,6 +2179,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
     res.end(data);
   } catch (err) {
+    const status = Number(err?.status) || 500;
+    if (status >= 400 && status < 600 && err?.message) {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+      return;
+    }
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
   }

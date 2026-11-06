@@ -1728,7 +1728,7 @@ function promptRepoDelete(org, repo) {
 // carry their tier via [data-tier]; nothing about their own render logic
 // changes, only which ones are visible.
 const TIER_STORAGE_KEY = "claude-dashboard-tier";
-const TIERS = ["daily", "weekly", "monthly", "yearly"];
+const TIERS = ["kanban", "daily", "weekly", "monthly", "yearly"];
 
 function setupTierTabs() {
   const tabs = [...document.querySelectorAll("#tierTabs .tier-tab")];
@@ -1754,6 +1754,12 @@ function applyTier(tier, { skipScroll = false } = {}) {
   document.querySelectorAll("main > [data-tier]").forEach((sec) => {
     sec.style.display = sec.dataset.tier === tier ? "" : "none";
   });
+  const toolbar = document.querySelector(".toolbar");
+  const hero = document.querySelector(".hero-row");
+  if (toolbar) toolbar.hidden = tier === "kanban";
+  if (hero) hero.hidden = tier === "kanban";
+  document.body.dataset.section = tier;
+  document.dispatchEvent(new CustomEvent("dashboard:tier", { detail: tier }));
   document.querySelectorAll("#tierTabs .tier-tab").forEach((btn) => {
     const active = btn.dataset.tier === tier;
     btn.classList.toggle("active", active);

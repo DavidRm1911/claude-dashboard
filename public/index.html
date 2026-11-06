@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/workbench.css" />
 </head>
 <body>
 
@@ -91,9 +92,23 @@
       <span class="tier-tab-label">Entorno anual</span>
       <span class="tier-tab-sub">Cuentas · skills · MCP · workspace</span>
     </button>
+    <button class="tier-tab" data-tier="kanban" role="tab" aria-selected="false" aria-controls="kanban">
+      <span class="tier-tab-label">Mi trabajo</span>
+      <span class="tier-tab-sub">Kanban · proyectos · agentes</span>
+    </button>
+
   </div>
 
-  <section id="resumen" class="bento" data-tier="daily"></section>
+  
+  <section id="kanban" class="workbench" data-tier="kanban" role="tabpanel" aria-labelledby="kanbanTitle">
+    <header class="workbench-heading"><div><span class="eyebrow">DE LA IDEA A LA ENTREGA</span><h2 id="kanbanTitle">Un equipo. Un siguiente paso.</h2><p>Organiza tus proyectos personales y deja contexto para la próxima IA.</p></div><div class="workbench-actions"><button id="boardExport" class="ghost-btn">Exportar</button><button id="boardNew" class="radar-button primary">＋ Nueva tarea</button></div></header>
+    <div class="workbench-tools"><label>Proyecto<select id="boardProject"><option value="">Todos mis proyectos</option></select></label><label>Responsable<select id="boardAgent"><option value="">Todo el equipo</option><option value="david">David</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="grok">Grok</option><option value="agy">Antigravity</option></select></label><label class="board-search">Buscar<input id="boardSearch" type="search" placeholder="Tarea, objetivo o contexto…" maxlength="180" /></label><label class="board-archive"><input id="boardArchived" type="checkbox" /> Ver archivadas</label></div>
+    <div id="boardSummary" class="board-summary"></div><p id="boardFeedback" class="radar-feedback" role="status" aria-live="polite"></p>
+    <div id="boardColumns" class="board-columns" aria-label="Tablero de tareas"></div>
+    <details class="board-planner" id="boardPlanner"><summary><span>Planificador IA</span><span>Convierte un objetivo en tareas verificables ↗</span></summary><form id="boardPlanForm"><label>Proyecto<select id="planProject" required></select></label><label>¿Qué quieres conseguir?<textarea id="planGoal" required maxlength="3000" rows="3" placeholder="Ej. mejorar el onboarding y entregar una primera versión pública con pruebas"></textarea></label><div class="planner-bottom"><p id="plannerNote">Claude recibe este objetivo y los títulos de tareas del proyecto. Usa tu sesión del CLI. Revisas el plan antes de añadir tareas.</p><button id="planSubmit" class="radar-button primary">Proponer plan con Claude</button></div></form><div id="planSuggestions" aria-live="polite"></div></details>
+  </section>
+
+<section id="resumen" class="bento" data-tier="daily"></section>
 
   <section class="note-card" id="cacheNote" data-tier="daily"></section>
 
@@ -389,5 +404,23 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="/app.js"></script>
+
+<dialog id="taskDialog" class="task-dialog" aria-labelledby="taskDialogTitle">
+  <form id="taskForm"><header><div><span class="eyebrow">CONTEXTO COMPARTIDO</span><h2 id="taskDialogTitle">Nueva tarea</h2></div><button type="button" id="taskClose" class="ghost-btn" aria-label="Cerrar editor de tarea">✕</button></header>
+    <label>Título<input name="title" required maxlength="180" placeholder="Un resultado concreto" /></label>
+    <div class="task-form-grid"><label>Proyecto<select name="project" required></select></label><label>Responsable<select name="agent"><option value="david">David</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="grok">Grok</option><option value="agy">Antigravity</option></select></label><label>Estado<select name="status"><option value="backlog">Por hacer</option><option value="doing">En curso</option><option value="review">En revisión</option><option value="done">Listo</option></select></label><label>Prioridad<select name="priority"><option value="medium">Media</option><option value="high">Alta</option><option value="low">Baja</option></select></label></div>
+    <label>Objetivo<textarea name="description" maxlength="6000" rows="3" placeholder="Qué hay que hacer y por qué"></textarea></label>
+    <label>Criterios de aceptación<textarea name="acceptance" maxlength="3000" rows="2" placeholder="Cómo sabemos que está terminado; pruebas y evidencia"></textarea></label>
+    <label>Contexto para la siguiente IA<textarea name="handoff" maxlength="6000" rows="3" placeholder="Avance, archivos, decisiones, pruebas y bloqueos"></textarea></label>
+    <div class="task-extra-fields">
+      <label>Vence<input name="due" type="date" /></label>
+      <label>Próximo paso<input name="nextAction" maxlength="500" placeholder="Siguiente acción concreta" /></label>
+      <label>Bloqueo<input name="blocker" maxlength="500" placeholder="Qué impide avanzar (si hay)" /></label>
+    </div>
+    <p id="taskFeedback" role="status" aria-live="polite"></p><footer><button id="taskArchive" type="button" class="ghost-btn" hidden>Archivar</button><button id="taskSave" class="radar-button primary">Guardar tarea</button></footer>
+  </form>
+</dialog>
+<script src="/kanban.js"></script>
+
 </body>
 </html>

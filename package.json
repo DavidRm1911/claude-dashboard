@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "test": "node --test test/interview-widget.test.js"
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
