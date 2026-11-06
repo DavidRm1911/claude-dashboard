@@ -94,21 +94,24 @@
   async function mutate(body, message = 'Guardado en tu equipo') {
     if (saving) return false;
     saving = true;
-    feedback('Guardando…');
-    if ($('taskDialog')?.open) $('taskFeedback').textContent = 'Guardando…';
-    const saveBtn = $('taskSave');
-    if (saveBtn) saveBtn.disabled = true;
+    const dialogOpen = Boolean($('taskDialog')?.open);
+    const saveBtn = dialogOpen ? $('taskSave') : null;
+    if (dialogOpen) {
+      feedback('Guardando…');
+      $('taskFeedback').textContent = 'Guardando…';
+      if (saveBtn) saveBtn.disabled = true;
+    }
     try {
       const available = data.plannerAvailable;
       data = await api('/api/kanban', body);
       data.plannerAvailable = available;
       render();
       feedback(message);
-      if ($('taskDialog')?.open) $('taskFeedback').textContent = '';
+      if (dialogOpen) $('taskFeedback').textContent = '';
       return true;
     } catch (error) {
       feedback(error.message);
-      $('taskFeedback').textContent = error.message;
+      if (dialogOpen) $('taskFeedback').textContent = error.message;
       return false;
     } finally {
       saving = false;
