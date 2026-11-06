@@ -288,7 +288,7 @@
     const footer = body.querySelector(".apply-actions") || body.querySelector(".apply-wait") || body;
     const box = document.createElement("div");
     box.className = "apply-actions apply-confirm";
-    box.innerHTML = `<p class="radar-meta" style="flex:1 1 100%;margin:0">${esc(message)}</p>
+    box.innerHTML = `<p class="radar-meta">${esc(message)}</p>
       <button type="button" class="radar-button primary" data-confirm-yes>Sí</button>
       <button type="button" class="radar-text-button" data-confirm-no>No</button>`;
     const old = footer.querySelector(".apply-confirm");

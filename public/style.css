@@ -813,8 +813,6 @@ main.is-loading > *:not(.toolbar):not(.hero) { opacity: 0.4; pointer-events: non
   #jobsFilters input[type="search"] { width: 100%; min-height: 44px; }
   .jobs-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .jobs-stat, .jobs-stat-btn { min-height: 44px; }
-  .jobs-stat-btn { appearance: none; border: 0; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
-  .jobs-stat-btn:hover, .jobs-stat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .jobs-item.radar-item { grid-template-columns: 1fr; gap: 10px; }
   .jobs-item .radar-item-actions { flex-direction: column; align-items: stretch; gap: 8px; padding-top: 4px; }
   .jobs-item .radar-button,
@@ -829,4 +827,5 @@ main.is-loading > *:not(.toolbar):not(.hero) { opacity: 0.4; pointer-events: non
 }
 .jobs-stat-btn { appearance: none; border: 0; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
 .jobs-stat-btn:hover, .jobs-stat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.apply-confirm > p { flex: 1 1 100%; margin: 0; }
 .studies-next { margin: 8px 0 4px; font-size: 0.88rem; }
