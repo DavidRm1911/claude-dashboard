@@ -36,6 +36,7 @@ body.keyboard-input .task-dialog[open] { transition:none; }
 .board-task { border:1px solid var(--border); background:var(--surface); padding:15px; border-radius:8px; transition:transform 180ms var(--motion-out),opacity 150ms ease; }
 .task-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:10px; color:var(--muted); }
 .task-meta > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-meta-flags { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 .task-priority { font-size:9px; letter-spacing:.03em; border:1px solid var(--border); border-radius:4px; padding:2px 5px; flex-shrink:0; }
 .task-priority.high { color:var(--accent); border-color:var(--accent); }
 .task-title { appearance:none; border:0; padding:0; margin:12px 0 6px; text-align:left; width:100%; font:inherit; font-weight:600; color:var(--ink); background:transparent; cursor:pointer; line-height:1.4; overflow-wrap:anywhere; }
@@ -88,12 +89,12 @@ body.motion-paused::before,body.page-hidden::before { animation-play-state:pause
 .model-bar-name .provider-logo { width:20px; height:20px; }
 .model-bar-name .provider-logo img { width:18px; height:18px; }
 @media(max-width:1000px) { .board-columns { grid-template-columns:repeat(2,minmax(0,1fr)); } .workbench-tools { flex-wrap:wrap; } .board-summary-tip { width:100%; margin-left:0; } }
-@media(max-width:600px) { .workbench-heading { align-items:flex-start; flex-direction:column; gap:18px; } .workbench-tools > label { flex:1 1 45%; } .workbench-tools .board-search { flex-basis:100%; } .board-columns { grid-template-columns:1fr; } .board-column { min-height:180px; } .workbench-tools select { max-width:100%; } .board-planner summary { flex-direction:column; gap:8px; } .planner-bottom,.plan-suggestion { flex-direction:column; align-items:flex-start; gap:12px; } .task-dialog { padding:18px; } .task-form-grid { gap:10px; } }
+@media(max-width:600px) { .workbench-heading { align-items:flex-start; flex-direction:column; gap:18px; } .workbench-actions { flex-wrap: wrap; width: 100%; } .workbench-tools > label { flex:1 1 45%; } .workbench-tools .board-search { flex-basis:100%; } .board-columns { grid-template-columns:1fr; } .board-column { min-height:180px; } .workbench-tools select { max-width:100%; } .board-planner summary { flex-direction:column; gap:8px; } .planner-bottom,.plan-suggestion { flex-direction:column; align-items:flex-start; gap:12px; } .task-dialog { padding:18px; } .task-form-grid { gap:10px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; } button,.board-task,.task-dialog[open] { transition:none; } button:active:not(:disabled),.board-task:hover,.board-task.dragging { transform:none; } }
 
 /* due / blocker (p: kanban due-mem0) */
 .task-due { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; }
-.task-due.past { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.task-due.past { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); font-weight: 600; }
 .task-blocker { font-size: 10px; letter-spacing: .02em; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .task-next { margin: 4px 0 12px; font-size: 12px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
 .task-extra-fields { display: grid; gap: 12px; }
