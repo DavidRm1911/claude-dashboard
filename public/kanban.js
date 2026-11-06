@@ -72,7 +72,8 @@
     el.addEventListener('click', event => {
       const chip = event.target.closest('[data-project-chip]');
       if (!chip) return;
-      $('boardProject').value = chip.dataset.projectChip;
+      const name = chip.dataset.projectChip;
+      $('boardProject').value = $('boardProject').value === name ? '' : name;
       render();
     });
   }
@@ -127,7 +128,8 @@
   }
 
   function cardHtml(t) {
-    return `<article class="board-task" data-id="${t.id}" draggable="${!t.archived}" aria-label="${e(t.title)}"><div class="task-meta"><span>${e(t.project)}</span><span class="task-meta-flags"><span class="task-priority ${t.priority}">${priorities[t.priority]}</span>${t.blocker ? `<span class="task-blocker" title="${e(t.blocker)}">Bloqueo</span>` : ''}${dueMeta(t)}</span></div><button class="task-title" data-edit="${t.id}">${e(t.title)}</button>${t.nextAction ? `<p class="task-next">${e(t.nextAction.slice(0, 160))}</p>` : t.description ? `<p>${e(t.description.slice(0, 140))}</p>` : ''}<div class="task-owner">${mark(t.agent)}<span>${names[t.agent]}</span>${t.handoff ? '<span class="task-context">Contexto listo</span>' : ''}</div><div class="task-card-actions"><label class="sr-only" for="move-${t.id}">Mover ${e(t.title)}</label><select id="move-${t.id}" data-move="${t.id}" ${t.archived ? 'disabled' : ''}>${Object.entries(states).map(([key, value]) => `<option value="${key}" ${key === t.status ? 'selected' : ''}>${value}</option>`).join('')}</select><button class="ghost-btn" data-brief="${t.id}" aria-label="Copiar contexto de ${e(t.title)}">Copiar entrega ↗</button>${t.archived ? `<button class="ghost-btn" data-restore="${t.id}">Restaurar</button>` : ''}</div></article>`;
+    const projectMeta = viewMode === 'projects' ? '' : `<span>${e(t.project)}</span>`;
+    return `<article class="board-task" data-id="${t.id}" draggable="${!t.archived}" aria-label="${e(t.title)}"><div class="task-meta">${projectMeta}<span class="task-meta-flags"><span class="task-priority ${t.priority}">${priorities[t.priority]}</span>${t.blocker ? `<span class="task-blocker" title="${e(t.blocker)}">Bloqueo</span>` : ''}${dueMeta(t)}</span></div><button class="task-title" data-edit="${t.id}">${e(t.title)}</button>${t.nextAction ? `<p class="task-next">${e(t.nextAction.slice(0, 160))}</p>` : t.description ? `<p>${e(t.description.slice(0, 140))}</p>` : ''}<div class="task-owner">${mark(t.agent)}<span>${names[t.agent]}</span>${t.handoff ? '<span class="task-context">Contexto listo</span>' : ''}</div><div class="task-card-actions"><label class="sr-only" for="move-${t.id}">Mover ${e(t.title)}</label><select id="move-${t.id}" data-move="${t.id}" ${t.archived ? 'disabled' : ''}>${Object.entries(states).map(([key, value]) => `<option value="${key}" ${key === t.status ? 'selected' : ''}>${value}</option>`).join('')}</select><button class="ghost-btn" data-brief="${t.id}" aria-label="Copiar contexto de ${e(t.title)}">Copiar entrega ↗</button>${t.archived ? `<button class="ghost-btn" data-restore="${t.id}">Restaurar</button>` : ''}</div></article>`;
   }
 
   function columnsHtml(tasks, { compact = false } = {}) {
@@ -210,7 +212,7 @@
             const list = pool.filter(t => t.project === name);
             if (!list.length) return '';
             const pc = projectCounts(list);
-            return `<section class="board-project-section" data-project="${e(name)}"><header class="board-project-header"><h3>${e(name)}</h3><span>${pc.doing} en curso · ${pc.backlog} por hacer · ${pc.review} revisión · ${pc.done} listo</span></header><div class="board-columns compact">${columnsHtml(list, { compact: true })}</div></section>`;
+            return `<section class="board-project-section" data-project="${e(name)}"><header class="board-project-header"><h3>${e(name)}</h3><span>${pc.doing} en curso · ${pc.backlog} por hacer · ${pc.review} en revisión · ${pc.done} listo</span></header><div class="board-columns compact">${columnsHtml(list, { compact: true })}</div></section>`;
           }).join('')
         : `<div class="board-empty"><p>No hay proyectos con tareas para estos filtros.</p></div>`;
     } else {
@@ -347,13 +349,32 @@
       }
     }
   });
+  function sameProjectDrop(column) {
+    if (!column || !dragId) return false;
+    const section = column.closest('[data-project]');
+    if (!section) return true;
+    const task = data.tasks.find(t => t.id === dragId);
+    return !!task && task.project === section.dataset.project;
+  }
   $('boardColumns').addEventListener('dragstart', event => {
     const card = event.target.closest('[data-id]'); if (!card) return;
     dragId = card.dataset.id; event.dataTransfer.setData('text/plain', dragId); event.dataTransfer.effectAllowed = 'move'; card.classList.add('dragging');
   });
-  $('boardColumns').addEventListener('dragover', event => { if (!dragId) return; const column = event.target.closest('.board-column'); if (column) { event.preventDefault(); column.classList.add('drop-target'); } });
+  $('boardColumns').addEventListener('dragover', event => {
+    if (!dragId) return;
+    const column = event.target.closest('.board-column');
+    if (!column) return;
+    if (!sameProjectDrop(column)) { column.classList.remove('drop-target'); return; }
+    event.preventDefault();
+    column.classList.add('drop-target');
+  });
   $('boardColumns').addEventListener('dragleave', event => { const col = event.target.closest('.board-column'); if (col && !col.contains(event.relatedTarget)) col.classList.remove('drop-target'); });
-  $('boardColumns').addEventListener('drop', async event => { event.preventDefault(); const col = event.target.closest('.board-column'); if (col && dragId) await move(dragId, col.dataset.status); dragId = null; });
+  $('boardColumns').addEventListener('drop', async event => {
+    event.preventDefault();
+    const col = event.target.closest('.board-column');
+    if (col && dragId && sameProjectDrop(col)) await move(dragId, col.dataset.status);
+    dragId = null;
+  });
   $('boardColumns').addEventListener('dragend', () => { dragId = null; document.querySelectorAll('.dragging,.drop-target').forEach(el => el.classList.remove('dragging', 'drop-target')); });
   $('boardExport').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify({ schema: 1, revision: data.revision, tasks: data.tasks }, null, 2)], { type: 'application/json' });
