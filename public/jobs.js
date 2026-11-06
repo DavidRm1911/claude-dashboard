@@ -127,7 +127,7 @@
             ${j.locationVerdict === "FAIL" ? '<span class="radar-badge warning">Ubicación no elegible</span>' : ""}
             ${j.decision === "postular" ? '<span class="radar-badge positive">Para postular</span>' : ""}
             ${j.trackerStatus === "applied" || j.applied ? '<span class="radar-badge positive">Enviada</span>'
-              : j.trackerStatus === "drafted" ? '<span class="radar-badge positive">Borrador en tracker</span>'
+              : j.trackerStatus === "drafted" ? '<span class="radar-badge">Borrador</span>'
               : j.trackerStatus ? '<span class="radar-badge positive">En tracker</span>' : ""}
             ${j.deadline ? `<span class="radar-meta">Cierra ${esc(j.deadline)}</span>` : ""}</div>
           <h4>${link(j.url, j.title)}</h4>
@@ -203,7 +203,7 @@
         const sent = job?.trackerStatus === "applied" || job?.applied;
         return `<div class="apply-done"><p><strong>Aprobada y registrada en tu tracker.</strong> ${sent ? "Ya quedó como enviada." : "Ahora envíala tú:"}</p>
         <p><a class="radar-button primary" href="${esc(run.url)}" target="_blank" rel="noopener noreferrer">Ir a la oferta y postular ↗</a>
-        ${sent ? '<span class="radar-badge positive">Enviada</span>' : `<button class="radar-button primary" type="button" data-mark-sent-ref="${esc(run.ref)}">Ya la envié</button>`}</p>
+        ${sent ? '<span class="radar-badge positive">Enviada</span>' : `<button class="radar-text-button" type="button" data-mark-sent-ref="${esc(run.ref)}">Ya la envié</button>`}</p>
         <p class="radar-meta">Archivos: <a href="${pdfUrl(run.preview.cv, run.preview.version)}" target="_blank" rel="noopener">CV</a> · <a href="${pdfUrl(run.preview.cover, run.preview.version)}" target="_blank" rel="noopener">Carta</a>. Cuando la envíes, en Claude Code: <code>/outcome ${esc(run.company)}</code>.</p></div>`;
       }
       case "error": return `${evaluation}<div class="apply-error"><p>${esc(run.error || "Algo falló.")}</p><button class="radar-button" data-retry>Reintentar desde el inicio</button></div>`;
