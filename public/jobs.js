@@ -26,9 +26,17 @@
     const dup = s.duplicatesHidden > 0 ? ` · ${s.duplicatesHidden} ${s.duplicatesHidden === 1 ? "duplicada oculta" : "duplicadas ocultas"}` : "";
     $("jobsSync").innerHTML = esc(run + dup) + warn;
     $("jobsStats").innerHTML = [
-      [s.high, "con 70+ para ti"], [s.open, "puntuadas abiertas"], [s.toApply, "marcadas para postular"],
-      [s.backlog, "en cola por puntuar"], [s.seenTotal, "ofertas vistas (nunca se repiten)"], [s.drafted + s.applied, "redactadas / enviadas"],
-    ].map(([n, l]) => `<div class="jobs-stat"><strong>${n}</strong><span>${esc(l)}</span></div>`).join("");
+      [s.high, "con 70+ para ti", null],
+      [s.open, "puntuadas abiertas", null],
+      [s.toApply, "marcadas para postular", null],
+      [s.newToday, "nuevas hoy", null],
+      [s.backlog, "en cola por puntuar", "cola"],
+      [s.filtered, "filtradas por el scraper", "filtradas"],
+      [s.seenTotal, "ofertas vistas (nunca se repiten)", null],
+      [s.drafted + s.applied, "redactadas / enviadas", null],
+    ].map(([n, l, view]) => view
+      ? `<button type="button" class="jobs-stat jobs-stat-btn" data-jobs-view="${esc(view)}"><strong>${n}</strong><span>${esc(l)}</span></button>`
+      : `<div class="jobs-stat"><strong>${n}</strong><span>${esc(l)}</span></div>`).join("");
   }
 
   function renderGaps() {
@@ -68,6 +76,20 @@
   function ensureFilterControls() {
     const form = $("jobsFilters");
     if (!form) return;
+    const view = $("jobsView");
+    if (view) {
+      const extras = [
+        ["cola", "En cola por puntuar"],
+        ["filtradas", "Filtradas por el scraper"],
+      ];
+      for (const [val, label] of extras) {
+        if (![...view.options].some((o) => o.value === val)) {
+          const opt = document.createElement("option");
+          opt.value = val; opt.textContent = label;
+          view.append(opt);
+        }
+      }
+    }
     const specs = [
       ["jobsPortal", "Portal", '<option value="">Todos</option>'],
       ["jobsLocation", "Ubicación", '<option value="">Todas</option>'],
@@ -84,11 +106,38 @@
   }
 
   function populateFilterOptions() {
-    const jobs = data.jobs || [];
-    const portals = [...new Set(jobs.map((j) => j.portal).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
-    const locations = [...new Set(jobs.map((j) => (j.location == null ? "" : String(j.location))).filter((l) => l))].sort((a, b) => a.localeCompare(b, "es"));
+    const pool = [...(data.jobs || []), ...(data.queue || []), ...(data.filteredJobs || [])];
+    const portals = [...new Set(pool.map((j) => j.portal).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+    const locations = [...new Set(pool.map((j) => (j.location == null ? "" : String(j.location))).filter((l) => l))].sort((a, b) => a.localeCompare(b, "es"));
     fillSelect("jobsPortal", portals, "Todos");
     fillSelect("jobsLocation", locations, "Todas");
+  }
+
+  function sharedFilters(j, { portal, location, remote, postedDays, limaToday, dayMs, q, useLangMin }) {
+    if (portal && j.portal !== portal) return false;
+    if (location && String(j.location ?? "") !== location) return false;
+    if (remote === "remote" && !isRemote(j)) return false;
+    if (remote === "onsite" && isRemote(j)) return false;
+    if (postedDays) {
+      const p = j.posted || j.firstSeen;
+      if (typeof p !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p) || Number.isNaN(dayMs(p))) return false;
+      if (Math.round((dayMs(limaToday) - dayMs(p)) / 86400000) > postedDays) return false;
+    }
+    const hay = `${j.title || ""} ${j.company || ""} ${j.location || ""} ${(j.strengths || []).join(" ")} ${j.skipReason || ""} ${j.reason || ""}`.toLocaleLowerCase();
+    return hay.includes(q);
+  }
+
+  function renderSimpleList(items, emptyMsg, badgeFn) {
+    $("jobsList").innerHTML = items.length ? items.map((j) => `
+      <article class="radar-item jobs-item" data-key="${esc(j.key)}">
+        <div class="radar-item-main">
+          <div class="radar-item-kicker">${badgeFn(j)}
+            ${j.firstSeen ? `<span class="radar-meta">${esc(j.firstSeen)}</span>` : ""}</div>
+          <h4>${link(j.url, j.title || "(sin título)")}</h4>
+          <div class="radar-meta">${esc(j.company || "")} · ${esc(j.location || "Ubicación no indicada")} · ${esc(j.portal || "")}</div>
+          ${j.skipReason || j.reason ? `<div class="radar-meta">${esc(j.skipReason || j.reason)}</div>` : ""}
+        </div>
+      </article>`).join("") : `<div class="board-empty"><span aria-hidden="true">·</span><p>${esc(emptyMsg)}</p></div>`;
   }
 
   function renderList() {
@@ -100,22 +149,26 @@
     const postedDays = Number($("jobsPosted")?.value || 0);
     const limaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
     const dayMs = (d) => Date.parse(`${d}T00:00:00Z`);
+    const filt = { portal, location, remote, postedDays, limaToday, dayMs, q };
+
+    if (view === "cola") {
+      const items = (data.queue || []).filter((j) => sharedFilters(j, filt));
+      return renderSimpleList(items, "Nada en cola.", (j) =>
+        `<span class="radar-badge">${esc(j.status === "unreachable" ? "Inalcanzable" : "En cola")}</span>`);
+    }
+    if (view === "filtradas") {
+      const items = (data.filteredJobs || []).filter((j) => sharedFilters(j, filt));
+      return renderSimpleList(items, "Nada filtrado.", (j) =>
+        `<span class="radar-badge">Filtrada</span>`);
+    }
+
     const jobs = data.jobs.filter((j) => {
       if ((j.score ?? 0) < min) return false;
       if (view === "open" && (j.decision === "descartar" || j.locationVerdict === "FAIL" || j.languageGate === "FAIL" || j.applied)) return false;
       if (view === "postular" && j.decision !== "postular") return false;
       if (view === "descartar" && j.decision !== "descartar") return false;
-      if (portal && j.portal !== portal) return false;
-      if (location && String(j.location ?? "") !== location) return false;
       if (lang && j.languageGate !== lang) return false;
-      if (remote === "remote" && !isRemote(j)) return false;
-      if (remote === "onsite" && isRemote(j)) return false;
-      if (postedDays) {
-        const p = j.posted;
-        if (typeof p !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p) || Number.isNaN(dayMs(p))) return false;
-        if (Math.round((dayMs(limaToday) - dayMs(p)) / 86400000) > postedDays) return false;
-      }
-      return `${j.title} ${j.company} ${j.location} ${j.strengths.join(" ")}`.toLocaleLowerCase().includes(q);
+      return sharedFilters(j, filt);
     });
     $("jobsList").innerHTML = jobs.length ? jobs.map((j) => `
       <article class="radar-item jobs-item" data-key="${esc(j.key)}">
@@ -147,7 +200,6 @@
         </div>
       </article>`).join("") : '<div class="board-empty"><span aria-hidden="true">·</span><p>No hay ofertas con estos filtros.</p></div>';
   }
-
   function render() {
     if (!data.available) {
       $("jobsList").innerHTML = `<div class="board-empty"><p>No encontré ai-job-search en ${esc(data.repoDir || "")}. Define DASHBOARD_JOBSEARCH_DIR.</p></div>`;
@@ -231,9 +283,29 @@
     try { renderPanel(start ? await api("/api/jobsearch/apply/start", { ref }) : await api(`/api/jobsearch/apply?ref=${ref}`)); }
     catch (e) { dialog.innerHTML = `<div class="apply-error"><p>${esc(e.message)}</p><button class="ghost-btn" data-close>Cerrar</button></div>`; }
   }
+  function showInlineConfirm(message, onYes) {
+    const body = dialog.querySelector(".apply-body") || dialog;
+    const footer = body.querySelector(".apply-actions") || body.querySelector(".apply-wait") || body;
+    const box = document.createElement("div");
+    box.className = "apply-actions apply-confirm";
+    box.innerHTML = `<p class="radar-meta" style="flex:1 1 100%;margin:0">${esc(message)}</p>
+      <button type="button" class="radar-button primary" data-confirm-yes>Sí</button>
+      <button type="button" class="radar-text-button" data-confirm-no>No</button>`;
+    const old = footer.querySelector(".apply-confirm");
+    if (old) old.remove();
+    // Replace existing footer actions if present
+    const actions = body.querySelector("footer.apply-actions");
+    if (actions) actions.replaceWith(box);
+    else footer.append(box);
+    box.querySelector("[data-confirm-yes]").addEventListener("click", () => onYes());
+    box.querySelector("[data-confirm-no]").addEventListener("click", () => {
+      if (openRef != null && runs[openRef]) renderPanel(runs[openRef]);
+    });
+  }
+
   async function act(action, body) {
     try { renderPanel(await api(`/api/jobsearch/apply/${action}`, { ref: openRef, ...body })); }
-    catch (e) { alert(e.message); }
+    catch (e) { $("jobsFeedback").textContent = e.message; }
   }
   dialog.addEventListener("click", (e) => {
     if (e.target.closest("[data-close]")) return dialog.close();
@@ -243,8 +315,14 @@
       const job = data?.jobs?.find((j) => j.ref === ref);
       return markSent(job?.key, markRef);
     }
-    if (e.target.closest("[data-cancel]")) { if (confirm("¿Cancelar esta postulación?")) act("cancel"); return; }
-    if (e.target.closest("[data-approve]")) { if (confirm("¿Aprobar este CV y carta? Quedará registrada para que la envíes tú.")) act("approve"); return; }
+    if (e.target.closest("[data-cancel]")) {
+      showInlineConfirm("¿Cancelar esta postulación?", () => act("cancel"));
+      return;
+    }
+    if (e.target.closest("[data-approve]")) {
+      showInlineConfirm("¿Aprobar este CV y carta? Quedará registrada para que la envíes tú.", () => act("approve"));
+      return;
+    }
     if (e.target.closest("[data-retry]")) { const ref = openRef; api("/api/jobsearch/apply/cancel", { ref }).finally(() => openPanel(ref, true)); }
   });
   dialog.addEventListener("submit", (e) => {
@@ -299,6 +377,14 @@
   ["jobsSearch", "jobsView", "jobsMin", "jobsPortal", "jobsLocation", "jobsLang", "jobsRemote", "jobsPosted"].forEach((id) => {
     const el = $(id);
     if (el) el.addEventListener("input", () => data && renderList());
+  });
+  $("jobsStats").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-jobs-view]");
+    if (!btn || !data) return;
+    const view = $("jobsView");
+    if (!view) return;
+    view.value = btn.dataset.jobsView;
+    renderList();
   });
   $("jobsFilters").addEventListener("submit", (e) => e.preventDefault());
   $("jobsReload").addEventListener("click", load);

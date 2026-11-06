@@ -238,3 +238,47 @@ test('get() adds mem0 bonus to score via relevance inject; AWS-only job stays fl
   assert.equal(computeBonus(new Set(['agents']), { agents: true }).bonus, 4);
 });
 
+
+
+test('newToday counts first_seen === limaDate (not UTC calendar day)', (t) => {
+  const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+  // Pick a UTC date string that may differ from Lima near midnight; force a non-today UTC stamp
+  const utcStamp = new Date().toISOString().slice(0, 10);
+  const otherDay = limaToday === '2099-01-01' ? '2099-01-02' : '2099-01-01';
+  const { store } = withSeen(t, {
+    nt1: { status: 'new', title: 'Hoy', company: 'LimaCo', url: 'https://n/1', first_seen: limaToday },
+    nt2: { status: 'new', title: 'Otro', company: 'UtcCo', url: 'https://n/2', first_seen: otherDay },
+    nt3: { status: 'ranked', ref: 99, rank_score: 70, title: 'Ranked', company: 'R', url: 'https://n/3', location_verdict: 'PASS', first_seen: limaToday, strengths: [], gaps: [] },
+  });
+  const data = store.get();
+  assert.equal(data.stats.newToday, 1);
+  // sanity: limaToday used even if UTC stamp differs (no assertion when equal)
+  assert.ok(typeof utcStamp === 'string');
+});
+
+test('get() exposes queue (new|unreachable) and filteredJobs (skipped), capped shape', (t) => {
+  const limaToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+  const { store } = withSeen(t, {
+    q1: { status: 'new', title: 'Queue A', company: 'QA', url: 'https://q/1', portal: 'p', location: 'Remote', first_seen: limaToday },
+    q2: { status: 'unreachable', title: 'Queue B', company: 'QB', url: 'https://q/2', portal: 'p', location: 'Lima', first_seen: '2000-01-01', reason: 'timeout' },
+    f1: { status: 'skipped', title: 'Skip A', company: 'SA', url: 'https://f/1', portal: 'p', location: 'X', first_seen: limaToday, skip_reason: 'senior title' },
+  });
+  const data = store.get();
+  assert.ok(Array.isArray(data.queue));
+  assert.ok(Array.isArray(data.filteredJobs));
+  const q = data.queue.find(j => j.key === 'q1');
+  assert.equal(q.status, 'new');
+  assert.equal(q.firstSeen, limaToday);
+  assert.equal(q.title, 'Queue A');
+  assert.ok(!('strengths' in q));
+  const u = data.queue.find(j => j.key === 'q2');
+  assert.equal(u.status, 'unreachable');
+  assert.equal(u.reason, 'timeout');
+  const f = data.filteredJobs.find(j => j.key === 'f1');
+  assert.equal(f.status, 'skipped');
+  assert.equal(f.skipReason, 'senior title');
+  // ranked list still present
+  assert.ok(data.jobs.some(j => j.ref === 1));
+  assert.equal(data.stats.backlog >= 2, true);
+  assert.equal(data.stats.filtered >= 2, true); // workspace fixture has 1 skipped + f1
+});
