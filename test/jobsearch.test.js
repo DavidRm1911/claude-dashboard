@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createJobSearchStore, aggregateGaps } from '../lib/jobsearch.js';
+import { createJobSearchStore, aggregateGaps, jobIsRemote } from '../lib/jobsearch.js';
 import { createKanbanStore } from '../lib/kanban.js';
 
 function workspace(t) {
@@ -109,4 +109,18 @@ test('gap aggregation counts recurring themes among 60+ jobs only', () => {
   assert.equal(g.considered, 2);
   assert.equal(g.groups.find(x => x.label.startsWith('LangChain')).count, 1);
   assert.ok(g.groups.find(x => x.label.startsWith('Guardias')));
+});
+
+test('jobIsRemote: location heuristic and remote portals; get() exposes isRemote', (t) => {
+  assert.equal(jobIsRemote({ location: 'Remote - LATAM' }), true);
+  assert.equal(jobIsRemote({ location: 'Lima, Perú' }), false);
+  assert.equal(jobIsRemote({ portal: 'remote-boards-search', location: '' }), true);
+  assert.equal(jobIsRemote({ portal: 'linkedin-search', location: '' }), false);
+  const { store } = withSeen(t, {
+    r1: ranked(30, { location: 'Remoto global', portal: 'computrabajo-search' }),
+    r2: ranked(31, { location: 'Lima', portal: 'computrabajo-search' }),
+  });
+  const byRef = Object.fromEntries(store.get().jobs.map(j => [j.ref, j]));
+  assert.equal(byRef[30].isRemote, true);
+  assert.equal(byRef[31].isRemote, false);
 });

@@ -41,13 +41,80 @@
       <p>${esc(x.action)}</p></div>`).join("");
   }
 
+  const REMOTE_LOC = /remote|remoto|anywhere|worldwide|\bworld\b|global|latam|latin america|work from anywhere/i;
+  const REMOTE_PORTALS = new Set(["remote-boards-search", "freehire-search"]);
+  function isRemote(j) {
+    if (typeof j.isRemote === "boolean") return j.isRemote;
+    const loc = String(j.location ?? "").trim();
+    if (REMOTE_LOC.test(loc)) return true;
+    if (REMOTE_PORTALS.has(j.portal) && (!loc || /^(global|worldwide|anywhere|n\/?a|-)?$/i.test(loc))) return true;
+    return false;
+  }
+
+  function fillSelect(id, values, allLabel) {
+    const el = $(id);
+    if (!el) return;
+    const prev = el.value;
+    const opts = [`<option value="">${esc(allLabel)}</option>`]
+      .concat(values.map((v) => {
+        const label = v.length > 40 ? `${v.slice(0, 37)}…` : v;
+        return `<option value="${esc(v)}">${esc(label)}</option>`;
+      }));
+    el.innerHTML = opts.join("");
+    if (prev && values.includes(prev)) el.value = prev;
+  }
+
+
+  function ensureFilterControls() {
+    const form = $("jobsFilters");
+    if (!form) return;
+    const specs = [
+      ["jobsPortal", "Portal", '<option value="">Todos</option>'],
+      ["jobsLocation", "Ubicación", '<option value="">Todas</option>'],
+      ["jobsLang", "Idioma", '<option value="">Todas</option><option value="PASS">Pasa</option><option value="FLAG">Revisar</option><option value="FAIL">No apto</option>'],
+      ["jobsRemote", "Remoto", '<option value="">Todos</option><option value="remote">Solo remoto</option><option value="onsite">Solo presencial/híbrido</option>'],
+      ["jobsPosted", "Fecha", '<option value="">Cualquiera</option><option value="7">Últimos 7 días</option><option value="14">Últimos 14</option><option value="30">Últimos 30</option>'],
+    ];
+    for (const [id, label, options] of specs) {
+      if ($(id)) continue;
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<label for="${id}">${label}</label><select id="${id}">${options}</select>`;
+      form.append(wrap);
+    }
+  }
+
+  function populateFilterOptions() {
+    const jobs = data.jobs || [];
+    const portals = [...new Set(jobs.map((j) => j.portal).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+    const locations = [...new Set(jobs.map((j) => (j.location == null ? "" : String(j.location))).filter((l) => l))].sort((a, b) => a.localeCompare(b, "es"));
+    fillSelect("jobsPortal", portals, "Todos");
+    fillSelect("jobsLocation", locations, "Todas");
+  }
+
   function renderList() {
     const view = $("jobsView").value, min = Number($("jobsMin").value), q = $("jobsSearch").value.toLocaleLowerCase();
+    const portal = $("jobsPortal")?.value || "";
+    const location = $("jobsLocation")?.value || "";
+    const lang = $("jobsLang")?.value || "";
+    const remote = $("jobsRemote")?.value || "";
+    const postedDays = Number($("jobsPosted")?.value || 0);
+    const limaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+    const dayMs = (d) => Date.parse(`${d}T00:00:00Z`);
     const jobs = data.jobs.filter((j) => {
       if ((j.score ?? 0) < min) return false;
       if (view === "open" && (j.decision === "descartar" || j.locationVerdict === "FAIL" || j.languageGate === "FAIL" || j.applied)) return false;
       if (view === "postular" && j.decision !== "postular") return false;
       if (view === "descartar" && j.decision !== "descartar") return false;
+      if (portal && j.portal !== portal) return false;
+      if (location && String(j.location ?? "") !== location) return false;
+      if (lang && j.languageGate !== lang) return false;
+      if (remote === "remote" && !isRemote(j)) return false;
+      if (remote === "onsite" && isRemote(j)) return false;
+      if (postedDays) {
+        const p = j.posted;
+        if (typeof p !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p) || Number.isNaN(dayMs(p))) return false;
+        if (Math.round((dayMs(limaToday) - dayMs(p)) / 86400000) > postedDays) return false;
+      }
       return `${j.title} ${j.company} ${j.location} ${j.strengths.join(" ")}`.toLocaleLowerCase().includes(q);
     });
     $("jobsList").innerHTML = jobs.length ? jobs.map((j) => `
@@ -79,7 +146,7 @@
       $("jobsList").innerHTML = `<div class="board-empty"><p>No encontré ai-job-search en ${esc(data.repoDir || "")}. Define DASHBOARD_JOBSEARCH_DIR.</p></div>`;
       return;
     }
-    renderStats(); renderGaps(); renderList();
+    ensureFilterControls(); populateFilterOptions(); renderStats(); renderGaps(); renderList();
   }
 
   async function load() {
@@ -193,7 +260,11 @@
     } catch (e) { $("jobsFeedback").textContent = e.message; btn.disabled = false; }
     finally { busy = false; }
   });
-  ["jobsSearch", "jobsView", "jobsMin"].forEach((id) => $(id).addEventListener("input", () => data && renderList()));
+  ensureFilterControls();
+  ["jobsSearch", "jobsView", "jobsMin", "jobsPortal", "jobsLocation", "jobsLang", "jobsRemote", "jobsPosted"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("input", () => data && renderList());
+  });
   $("jobsFilters").addEventListener("submit", (e) => e.preventDefault());
   $("jobsReload").addEventListener("click", load);
   document.addEventListener("dashboard:tier", (e) => { if (e.detail === "jobs") load(); });
