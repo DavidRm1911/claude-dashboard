@@ -121,6 +121,7 @@
       <article class="radar-item jobs-item" data-key="${esc(j.key)}">
         <div class="radar-item-main">
           <div class="radar-item-kicker"><span class="jobs-ref">#${j.ref}</span><span class="radar-badge ${scoreClass(j.score)}">${j.score ?? "?"}/100</span>
+            ${j.mem0Bonus > 0 ? `<span class="radar-badge">+${j.mem0Bonus} mem0</span>` : ""}
             ${j.closingSoon ? '<span class="radar-badge warning">Cierra pronto</span>' : ""}
             ${j.stretch ? '<span class="radar-badge warning">Pide más años</span>' : ""}
             ${j.locationVerdict === "FLAG" ? '<span class="radar-badge warning">Verificar ubicación</span>' : ""}
@@ -132,6 +133,7 @@
             ${j.deadline ? `<span class="radar-meta">Cierra ${esc(j.deadline)}</span>` : ""}</div>
           <h4>${link(j.url, j.title)}</h4>
           <div class="radar-meta">${esc(j.company)} · ${esc(j.location || "Ubicación no indicada")} · ${esc(j.portal || "")}${j.posted ? ` · ${esc(j.posted)}` : ""}</div>
+          ${j.mem0Reason ? `<div class="radar-meta">${esc(j.mem0Reason)}</div>` : ""}
           <ul class="jobs-notes">${j.strengths.slice(0, 2).map((s) => `<li class="plus">${esc(s)}</li>`).join("")}${j.gaps.slice(0, 2).map((g) => `<li class="minus">${esc(g)}</li>`).join("")}</ul>
         </div>
         <div class="radar-item-actions">

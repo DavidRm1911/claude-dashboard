@@ -18,7 +18,20 @@ function workspace(t) {
   };
   fs.writeFileSync(path.join(dir, 'repo', 'job_scraper', 'seen_jobs.json'), JSON.stringify({ seen }));
   const kanban = createKanbanStore({ dataDir: path.join(dir, 'data') });
-  return { dir, kanban, store: createJobSearchStore({ repoDir: path.join(dir, 'repo'), kanbanStore: kanban, kanbanProject: 'ai-job-search-review' }) };
+  const offlineRelevance = {
+    fetchMem0ThemesSync: () => ({
+      themes: { agents: false, llm: false, evals: false, gcp: false },
+      source: 'offline',
+      updatedAt: '2026-11-06T00:00:00Z',
+    }),
+  };
+  return {
+    dir, kanban,
+    store: createJobSearchStore({
+      repoDir: path.join(dir, 'repo'), kanbanStore: kanban, kanbanProject: 'ai-job-search-review',
+      relevance: offlineRelevance,
+    }),
+  };
 }
 
 test('lists ranked jobs by score with stats; missing workspace is reported, not thrown', (t) => {
@@ -182,3 +195,46 @@ test('markSent creates row or upgrades drafted→applied; already applied is no-
   assert.throws(() => store.markSent({ key: 'c' }), { status: 404 });
   assert.throws(() => store.markSent({}), { status: 400 });
 });
+
+test('get() adds mem0 bonus to score via relevance inject; AWS-only job stays flat', async (t) => {
+  const { detectThemesInText, computeBonus, scoreJobBonus } = await import('../lib/relevance.js');
+  const themes = { themes: { agents: true, llm: true, evals: false, gcp: true }, source: 'mem0', updatedAt: '2026-11-06T00:00:00Z' };
+  const ctx = workspace(t);
+  const file = path.join(ctx.dir, 'repo', 'job_scraper', 'seen_jobs.json');
+  const seen = JSON.parse(fs.readFileSync(file, 'utf8')).seen;
+  seen.m1 = {
+    status: 'ranked', ref: 40, rank_score: 80,
+    title: 'AI Agent Engineer', company: 'Neo', url: 'https://z/m1',
+    location_verdict: 'PASS',
+    strengths: ['LangGraph', 'Claude'], gaps: ['GCP Vertex'],
+  };
+  seen.m2 = {
+    status: 'ranked', ref: 41, rank_score: 80,
+    title: 'Cloud Engineer', company: 'InfraCo', url: 'https://z/m2',
+    location_verdict: 'PASS',
+    strengths: ['AWS', 'Terraform'], gaps: [],
+  };
+  fs.writeFileSync(file, JSON.stringify({ seen }));
+  const store = createJobSearchStore({
+    repoDir: path.join(ctx.dir, 'repo'),
+    kanbanStore: ctx.kanban,
+    kanbanProject: 'ai-job-search-review',
+    relevance: {
+      fetchMem0ThemesSync: () => themes,
+      scoreJobBonus,
+    },
+  });
+  const byRef = Object.fromEntries(store.get().jobs.map(j => [j.ref, j]));
+  assert.equal(byRef[40].baseScore, 80);
+  assert.equal(byRef[40].mem0Bonus, 12); // agents + llm + gcp
+  assert.equal(byRef[40].score, 92);
+  assert.match(byRef[40].mem0Reason, /agentes/);
+  assert.equal(byRef[41].baseScore, 80);
+  assert.equal(byRef[41].mem0Bonus, 0);
+  assert.equal(byRef[41].score, 80);
+  assert.equal(byRef[41].mem0Reason, null);
+  // sanity: helpers still agree
+  assert.ok(detectThemesInText('LangGraph Claude GCP').has('agents'));
+  assert.equal(computeBonus(new Set(['agents']), { agents: true }).bonus, 4);
+});
+
