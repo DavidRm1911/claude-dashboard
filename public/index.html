@@ -3,50 +3,58 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Claude Dashboard — Uso, costos y skills de David Gallo</title>
-<meta name="description" content="Tablero local de uso de Claude Code: tokens, costos estimados, actividad, skills instaladas y servidores MCP a través de las cuentas personal y de empresa. Los generadores de ideas y análisis usan Grok primero, con Claude como respaldo." />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<title>Espacio local · agentes y Radar AWS</title>
+<meta name="description" content="Un espacio local para uso de agentes, arquitecturas AWS, aprendizaje y oportunidades laborales. Sin enviar tu historial a fuentes públicas." />
 <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/workbench.css" />
+<link rel="stylesheet" href="/workbench.css" />
 </head>
 <body>
+<a class="skip-link" href="#main">Ir al contenido</a>
 
 <nav class="topbar">
   <span class="brand">
     <span class="brand-mark" aria-hidden="true">用</span>
-    <span class="brand-text">CLAUDE<br/>DASHBOARD</span>
+    <span class="brand-text">ESPACIO<br/>LOCAL</span>
   </span>
   <span class="live-pill"><span class="live-dot"></span><span id="generatedAt">cargando…</span></span>
 </nav>
 
-<main>
+<main id="main">
   <div class="hero-row">
   <header class="hero">
     <div class="hero-top-row">
-      <span class="eyebrow">2 CUENTAS · USO EN VIVO</span>
-      <p class="hero-jp">利用状況</p>
+      <span class="eyebrow">LOCAL · MULTIAGENTE</span>
+      <span class="hero-meta">Tus registros, en tu equipo</span>
     </div>
     <div class="hero-main">
       <h1 class="hero-title">
-        <span class="line">TU USO</span>
-        <span class="line accent">DE CLAUDE</span>
+        <span class="line">Tu espacio de <span class="accent">agentes.</span></span>
       </h1>
       <div class="hero-float-stat" id="heroFloatStat" hidden>
-        <span class="hero-float-label">COSTO DE ESTE PERIODO</span>
+        <span class="hero-float-label">REFERENCIA API · CLAUDE</span>
         <span class="hero-float-value" id="heroFloatValue">·</span>
         <span class="hero-float-sub" id="heroFloatSub"></span>
       </div>
     </div>
-    <p class="subhead">Resumen combinado de tu cuenta <strong>personal</strong> y tu cuenta de <strong>empresa</strong>: tokens, costos, sesiones, modelos, skills y MCP. Los generadores de ideas y análisis (ideas-ia, mis-proyectos, CLAUDE.md) corren primero en <strong>Grok</strong>, con <strong>Claude</strong> como respaldo automático.</p>
+    <p class="subhead">Claude Code, Codex, Grok y AGY. Conecta tus registros locales y revisa qué usaste, en qué proyecto y con qué modelo.</p>
     <div class="hero-bottom-row">
-      <span class="hero-meta">localhost:4949</span>
+      <span class="hero-meta">Sin telemetría · conexiones locales</span>
       <span class="hero-meta" id="providerStatus"></span>
     </div>
   </header>
-  <span class="hero-vertical" aria-hidden="true">EN VIVO ↗</span>
   </div>
+
+  <p id="appError" class="app-error" role="alert" hidden></p>
+  <section class="agents-section" aria-labelledby="agentsTitle">
+    <div class="section-heading">
+      <div><h2 id="agentsTitle">Tus agentes</h2><p>Claude ya está conectado. Agrega las fuentes que quieres consultar.</p></div>
+      <button id="refreshAgents" class="ghost-btn">Actualizar</button>
+    </div>
+    <div id="agentsWrap" class="agents-list" aria-live="polite"><p class="skill-empty">Detectando fuentes locales…</p></div>
+    <p class="agents-note">Los registros pueden estar incompletos. Los tokens no son una cuota de suscripción ni una factura. AGY muestra actividad cuando su registro no incluye tokens.</p>
+    <details class="agent-activity"><summary>Sesiones recientes de Codex, Grok y AGY</summary><div id="agentSessions"></div></details>
+    <p id="agentsFeedback" class="agents-feedback" role="status"></p>
+  </section>
 
   <div class="toolbar">
     <div class="toolbar-group">
@@ -59,7 +67,7 @@
       </div>
     </div>
     <div class="toolbar-group">
-      <label class="toolbar-label" for="accountFilter">Cuenta</label>
+      <label class="toolbar-label" for="accountFilter">Cuenta Claude</label>
       <select id="accountFilter" class="toolbar-select">
         <option value="all">Todas</option>
       </select>
@@ -76,30 +84,44 @@
   </div>
 
   <div class="tier-tabs" id="tierTabs" role="tablist" aria-label="Nivel de detalle">
-    <button class="tier-tab active" data-tier="daily" role="tab" aria-selected="true">
-      <span class="tier-tab-label">Pulso diario</span>
-      <span class="tier-tab-sub">Resumen · actividad · historial</span>
-    </button>
-    <button class="tier-tab" data-tier="weekly" role="tab" aria-selected="false">
-      <span class="tier-tab-label">Análisis semanal</span>
-      <span class="tier-tab-sub">Costos · insights · proyectos</span>
-    </button>
-    <button class="tier-tab" data-tier="monthly" role="tab" aria-selected="false">
-      <span class="tier-tab-label">Inventario mensual</span>
-      <span class="tier-tab-sub">Ideas IA · repos · auditoría</span>
-    </button>
-    <button class="tier-tab" data-tier="yearly" role="tab" aria-selected="false">
-      <span class="tier-tab-label">Entorno anual</span>
-      <span class="tier-tab-sub">Cuentas · skills · MCP · workspace</span>
-    </button>
     <button class="tier-tab" data-tier="kanban" role="tab" aria-selected="false" aria-controls="kanban">
       <span class="tier-tab-label">Mi trabajo</span>
       <span class="tier-tab-sub">Kanban · proyectos · agentes</span>
     </button>
-
+    <button class="tier-tab active" data-tier="daily" role="tab" aria-selected="true">
+      <span class="tier-tab-label">Uso de Claude</span>
+      <span class="tier-tab-sub">Resumen · actividad · historial</span>
+    </button>
+    <button class="tier-tab" data-tier="agents" role="tab" aria-selected="false">
+      <span class="tier-tab-label">Otras IAs</span>
+      <span class="tier-tab-sub">Uso · costos · cuotas</span>
+    </button>
+    <button class="tier-tab" data-tier="jobs" role="tab" aria-selected="false" aria-controls="jobs">
+      <span class="tier-tab-label">Empleos</span>
+      <span class="tier-tab-sub">Ofertas puntuadas · postular · brechas</span>
+    </button>
+    <button class="tier-tab" data-tier="studies" role="tab" aria-selected="false" aria-controls="studies">
+      <span class="tier-tab-label">Estudios</span>
+      <span class="tier-tab-sub">Becas · maestrías · investigación</span>
+    </button>
+    <button class="tier-tab" data-tier="radar" role="tab" aria-selected="false" aria-controls="radar">
+      <span class="tier-tab-label">Radar</span>
+      <span class="tier-tab-sub">AWS · aprender · empleo</span>
+    </button>
+    <button class="tier-tab" data-tier="weekly" role="tab" aria-selected="false">
+      <span class="tier-tab-label">Análisis</span>
+      <span class="tier-tab-sub">Costos · insights · proyectos</span>
+    </button>
+    <button class="tier-tab" data-tier="monthly" role="tab" aria-selected="false">
+      <span class="tier-tab-label">Proyectos</span>
+      <span class="tier-tab-sub">Ideas IA · repos · auditoría</span>
+    </button>
+    <button class="tier-tab" data-tier="yearly" role="tab" aria-selected="false">
+      <span class="tier-tab-label">Entorno</span>
+      <span class="tier-tab-sub">Cuentas · skills · MCP · workspace</span>
+    </button>
   </div>
 
-  
   <section id="kanban" class="workbench" data-tier="kanban" role="tabpanel" aria-labelledby="kanbanTitle">
     <header class="workbench-heading"><div><span class="eyebrow">DE LA IDEA A LA ENTREGA</span><h2 id="kanbanTitle">Un equipo. Un siguiente paso.</h2><p>Organiza tus proyectos personales y deja contexto para la próxima IA.</p></div><div class="workbench-actions"><button id="boardExport" class="ghost-btn">Exportar</button><button id="boardNew" class="radar-button primary">＋ Nueva tarea</button></div></header>
     <div class="workbench-tools"><label>Proyecto<select id="boardProject"><option value="">Todos mis proyectos</option></select></label><label>Responsable<select id="boardAgent"><option value="">Todo el equipo</option><option value="david">David</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="grok">Grok</option><option value="agy">Antigravity</option></select></label><label class="board-search">Buscar<input id="boardSearch" type="search" placeholder="Tarea, objetivo o contexto…" maxlength="180" /></label><label class="board-archive"><input id="boardArchived" type="checkbox" /> Ver archivadas</label></div>
@@ -107,8 +129,105 @@
     <div id="boardColumns" class="board-columns" aria-label="Tablero de tareas"></div>
     <details class="board-planner" id="boardPlanner"><summary><span>Planificador IA</span><span>Convierte un objetivo en tareas verificables ↗</span></summary><form id="boardPlanForm"><label>Proyecto<select id="planProject" required></select></label><label>¿Qué quieres conseguir?<textarea id="planGoal" required maxlength="3000" rows="3" placeholder="Ej. mejorar el onboarding y entregar una primera versión pública con pruebas"></textarea></label><div class="planner-bottom"><p id="plannerNote">Claude recibe este objetivo y los títulos de tareas del proyecto. Usa tu sesión del CLI. Revisas el plan antes de añadir tareas.</p><button id="planSubmit" class="radar-button primary">Proponer plan con Claude</button></div></form><div id="planSuggestions" aria-live="polite"></div></details>
   </section>
+  <section id="jobs" class="jobs" data-tier="jobs" role="tabpanel" aria-labelledby="jobsTitle">
+    <header class="radar-heading">
+      <div><span class="eyebrow">TU BÚSQUEDA, CADA MAÑANA</span><h2 id="jobsTitle">Ofertas que encajan contigo.<br/>Tú decides a cuáles ir.</h2><p>Puntuadas contra tu perfil real. Elige “Postular” y Claude te preguntará lo que falte antes de redactar. Nada se envía solo.</p></div>
+      <div class="radar-sync"><span id="jobsSync">Leyendo ai-job-search…</span><button id="jobsReload" class="radar-button">Recargar</button></div>
+    </header>
+    <div id="jobsStats" class="jobs-stats"></div>
+    <p id="jobsFeedback" class="radar-feedback" role="status" aria-live="polite"></p>
+    <div class="jobs-layout">
+      <div class="jobs-main">
+        <form class="radar-filters" id="jobsFilters" role="search">
+          <div class="radar-search"><label for="jobsSearch">Buscar</label><input id="jobsSearch" type="search" placeholder="AWS, remoto, Lima, empresa…" maxlength="120" autocomplete="off" /></div>
+          <div><label for="jobsView">Mostrar</label><select id="jobsView"><option value="open">Abiertas</option><option value="postular">Marcadas para postular</option><option value="descartar">Descartadas</option><option value="all">Todas</option></select></div>
+          <div><label for="jobsMin">Puntaje mínimo</label><select id="jobsMin"><option value="0">Cualquiera</option><option value="60">60+</option><option value="70" selected>70+</option><option value="80">80+</option></select></div>
+          <div><label for="jobsPortal">Portal</label><select id="jobsPortal"><option value="">Todos</option></select></div>
+          <div><label for="jobsLocation">Ubicación</label><select id="jobsLocation"><option value="">Todas</option></select></div>
+          <div><label for="jobsLang">Idioma</label><select id="jobsLang"><option value="">Todas</option><option value="PASS">Pasa</option><option value="FLAG">Revisar</option><option value="FAIL">No apto</option></select></div>
+          <div><label for="jobsRemote">Remoto</label><select id="jobsRemote"><option value="">Todos</option><option value="remote">Solo remoto</option><option value="onsite">Solo presencial/híbrido</option></select></div>
+          <div><label for="jobsPosted">Fecha</label><select id="jobsPosted"><option value="">Cualquiera</option><option value="7">Últimos 7 días</option><option value="14">Últimos 14</option><option value="30">Últimos 30</option></select></div>
+        </form>
+        <div id="jobsList" class="radar-list"></div>
+      </div>
+      <aside class="jobs-gaps" aria-labelledby="jobsGapsTitle"><span class="eyebrow">QUÉ TE FALTA</span><h3 id="jobsGapsTitle">Lo que más piden y aún no muestras</h3><div id="jobsGaps"></div></aside>
+    </div>
+  </section>
 
-<section id="resumen" class="bento" data-tier="daily"></section>
+  <section id="studies" class="jobs" data-tier="studies" role="tabpanel" aria-labelledby="studiesTitle">
+    <header class="radar-heading">
+      <div><span class="eyebrow">ABRIR LAS ALAS · 2027</span><h2 id="studiesTitle">Estudiar afuera,<br/>sin pagarlo tú.</h2><p>Solo programas 100% financiados para empezar en 2027, verificados en su web oficial y puntuados contra tu perfil. Se actualiza cada lunes.</p></div>
+      <div class="radar-sync"><span id="studiesSync">Leyendo…</span><button id="studiesReload" class="radar-button">Recargar</button></div>
+    </header>
+    <div id="studiesStats" class="jobs-stats"></div>
+    <form class="radar-filters" id="studiesFilters" role="search">
+      <div class="radar-search"><label for="studiesSearch">Buscar</label><input id="studiesSearch" type="search" placeholder="Japón, maestría, investigación…" maxlength="120" autocomplete="off" /></div>
+      <div><label for="studiesType">Tipo</label><select id="studiesType"><option value="all">Todos</option><option value="master">Maestría</option><option value="research">Investigación</option><option value="short">Programa corto</option></select></div>
+      <div><label for="studiesRegion">Región</label><select id="studiesRegion"><option value="all">Todas</option><option>Europe</option><option>USA/Canada</option><option>Asia</option><option>Online</option><option value="Worldwide">Mundial</option></select></div>
+      <div><label for="studiesView">Mostrar</label><select id="studiesView"><option value="eligible">Elegibles</option><option value="saved">Guardadas</option><option value="excluded">Descartadas / no aplican</option><option value="all">Todas</option></select></div>
+    </form>
+    <p id="studiesFeedback" class="radar-feedback" role="status" aria-live="polite"></p>
+    <div id="studiesList" class="radar-list"></div>
+  </section>
+
+  <section id="radar" class="radar" data-tier="radar" role="tabpanel" aria-labelledby="radarTitle">
+    <header class="radar-heading">
+      <div><span class="eyebrow">TU MESA DE EXPLORACIÓN</span><h2 id="radarTitle">Una idea para construir.<br/>Una oportunidad para avanzar.</h2><p>Arquitecturas, novedades de AWS y oportunidades que vale la pena revisar.</p></div>
+      <div class="radar-sync"><span id="radarSyncTime">Leyendo la copia local…</span><button id="radarRefresh" class="radar-button" disabled>Actualizar fuentes</button></div>
+    </header>
+    <div class="radar-consent" id="radarConsent" hidden>
+      <div><h3>Un Radar público. Tus proyectos, privados.</h3><p>Activarlo consulta feeds de AWS y Get on Board, y las API públicas de Remotive desde tu equipo. Estas fuentes reciben tu IP, no tus registros, CV ni proyectos. AWS Knowledge MCP solo se consulta al pulsar su botón y recibe una pregunta genérica.</p></div>
+      <button id="radarEnable" class="radar-button primary">Activar Radar</button>
+    </div>
+    <p id="radarFeedback" class="radar-feedback" role="status" aria-live="polite"></p>
+    <div class="radar-layout">
+      <aside class="radar-rail" aria-label="Colecciones del Radar">
+        <span class="radar-rail-label">EXPLORAR</span>
+        <div id="radarCollections" class="radar-collections" role="group" aria-label="Colección">
+          <button data-collection="digest" aria-pressed="true"><span>Tu edición</span><span aria-hidden="true">↗</span></button>
+          <button data-collection="architecture" aria-pressed="false">Arquitecturas</button>
+          <button data-collection="news" aria-pressed="false">Novedades AWS</button>
+          <button data-collection="learning" aria-pressed="false">Aprender</button>
+          <button data-collection="credits" aria-pressed="false">Créditos AWS</button>
+          <button data-collection="jobs" aria-pressed="false">Encontrar trabajo</button>
+          <button data-collection="saved" aria-pressed="false">Guardados <span id="radarSavedCount">0</span></button>
+        </div>
+        <div class="radar-rail-note"><strong>Con criterio, no con hype.</strong><p>La comunidad comparte experiencias. Una publicación no certifica a su autor. Para patrones oficiales, filtra por AWS.</p></div>
+        <button id="radarPause" class="radar-text-button" hidden>Pausar consultas externas</button>
+      </aside>
+      <div class="radar-content">
+        <div id="radarEdition" class="radar-edition" hidden></div>
+        <div class="radar-list-heading"><h3 id="radarListTitle">En tu edición</h3><span id="radarResultCount"></span></div>
+        <form class="radar-filters" id="radarFilters" role="search">
+          <div class="radar-search"><label for="radarSearch">Buscar en esta colección</label><input id="radarSearch" type="search" placeholder="Bedrock, serverless, backend…" maxlength="160" autocomplete="off" /></div>
+          <div><label for="radarTopic">Tema</label><select id="radarTopic"><option value="all">Todos los temas</option><option>IA / agentes</option><option>Serverless</option><option>Datos</option><option>Seguridad</option><option>DevOps</option></select></div>
+          <div><label for="radarOrigin">Fuente</label><select id="radarOrigin"><option value="all">Todas las fuentes</option><option value="official">Solo AWS oficial</option><option value="community">Comunidad</option></select></div>
+          <div><label for="radarAge">Antigüedad</label><select id="radarAge"><option value="all">Todo disponible</option><option value="7">7 días</option><option value="30">30 días</option></select></div>
+          <div id="radarRegionField" hidden><label for="radarRegion">Ubicación indicada</label><select id="radarRegion"><option value="eligible">Perú + remoto global/LATAM</option><option value="peru">Perú</option><option value="latam-global">Remoto global/LATAM</option><option value="all">Todas (verificar país)</option></select></div>
+          <label class="radar-check"><input type="checkbox" id="radarUnread" />Solo sin leer</label>
+        </form>
+        <div id="radarCreditTools" class="radar-credit-tools" hidden><p><strong>USD 100 iniciales</strong> para clientes nuevos; hasta USD 100 más mediante actividades elegibles. No es un regalo para cuentas existentes.</p><button id="radarCreditSearch" class="radar-button">Descubrir con AWS Knowledge MCP</button><span id="radarCreditStatus" role="status"></span></div>
+        <div id="radarCv" class="radar-cv" hidden><div><span class="eyebrow">TU PERFIL, SOLO LOCAL</span><h4>Compatibilidad con tu CV</h4><p>Pega el texto o importa PDF, TXT o MD. Se guarda en este navegador; no se envía a Remotive, AWS ni a ningún modelo. La coincidencia es una ayuda para priorizar, no probabilidad de contratación.</p></div><div class="radar-cv-actions"><button id="radarCvToggle" class="radar-button">Añadir CV</button><span id="radarCvSaved"></span></div><div id="radarCvEditor" hidden><label for="radarCvText">Contenido de tu CV</label><textarea id="radarCvText" rows="7" maxlength="20000" placeholder="Pega experiencia, tecnologías y ubicación…"></textarea><div class="radar-cv-controls"><label for="radarCvFile" class="radar-button">Importar archivo</label><input id="radarCvFile" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" hidden><button id="radarCvSave" class="radar-button primary">Guardar en este navegador</button><button id="radarCvDelete" class="radar-text-button">Borrar CV</button></div><p id="radarCvFeedback" role="status"></p></div></div>
+        <div id="radarList" class="radar-list"><div class="radar-skeleton" aria-label="Cargando Radar"><span></span><span></span><span></span></div></div>
+        <button id="radarMore" class="radar-button radar-more" hidden>Mostrar más</button>
+        <div id="radarJobLinks" class="radar-job-links" hidden></div>
+      </div>
+    </div>
+    <details class="radar-sources"><summary>Fuentes, actualización y privacidad</summary><div id="radarSources"></div><p class="radar-footnote">Se consulta al abrir Radar o pulsar Actualizar, como máximo una vez por hora en AWS y cada seis horas en bolsas de empleo. AWS Knowledge MCP busca bajo demanda y espera 12 horas entre búsquedas. Sin scraping de perfiles ni contenido con login. Las búsquedas y marcas permanecen locales. El CV no sale de este navegador. No se postula a empleos automáticamente.</p></details>
+  </section>
+
+  <section class="agent-detail-section" data-tier="agents" aria-labelledby="agentDetailTitle">
+    <div class="section-heading"><div><h2 id="agentDetailTitle">Uso de tus otras IAs</h2><p>El rango aplica a incrementos y actividad registrados. La cuenta filtra solo Claude.</p></div></div>
+    <div class="seg agent-detail-tabs" id="agentDetailTabs" role="tablist" aria-label="Detalle de agente">
+      <button id="detail-codex" data-detail="codex" role="tab" aria-controls="agentDetail" aria-selected="true">Codex</button>
+      <button id="detail-grok" data-detail="grok" role="tab" aria-controls="agentDetail" aria-selected="false" tabindex="-1">Grok</button>
+      <button id="detail-agy" data-detail="agy" role="tab" aria-controls="agentDetail" aria-selected="false" tabindex="-1">AGY</button>
+    </div>
+    <div id="agentDetail" role="tabpanel" aria-labelledby="detail-codex"><p class="skill-empty">Cargando registros…</p></div>
+  </section>
+  <p id="pricingWarning" class="agents-note" data-tier="daily" hidden></p>
+  <details class="pricing-detail" data-tier="daily"><summary>Cómo se calcula el equivalente API de Claude</summary><div id="pricingDetail"></div></details>
+  <section id="resumen" class="bento" data-tier="daily"></section>
 
   <section class="note-card" id="cacheNote" data-tier="daily"></section>
 
@@ -207,7 +326,7 @@
       <span class="card-eyebrow">¿SE TE OCURRIÓ ALGO?</span>
       <h3 class="box-title">Investiga tu propia idea</h3>
       <p class="subhead small" style="margin-bottom:0.9rem">Descríbela como te haya salido — Claude investiga si ya existe algo parecido, qué tan madura está la tecnología, y si encaja con lo que ya tienes construido. Devuelve un veredicto: si vale la pena o no.</p>
-      <textarea id="customIdeaInput" class="custom-idea-input" rows="3" placeholder="Ej: usar RAG sobre las actas de reunión de NEO para que cualquiera pregunte 'qué se decidió sobre X'…"></textarea>
+      <textarea id="customIdeaInput" class="custom-idea-input" rows="3" placeholder="Ej: usar RAG sobre las actas de reunión de tu equipo para que cualquiera pregunte 'qué se decidió sobre X'…"></textarea>
       <div class="ideas-toolbar" style="margin-top:0.8rem;margin-bottom:0">
         <button id="customIdeaGenerate" class="graphify-update-btn">Investigar esta idea</button>
         <span id="customIdeaStatus" class="graphify-status"></span>
@@ -267,11 +386,11 @@
   <!-- MIS PROYECTOS GITHUB -->
   <section id="mis-proyectos" data-tier="monthly" style="margin-top:3rem">
     <span class="eyebrow block-eyebrow">MIS PROYECTOS</span>
-    <h2 class="section-title">Repositorios personales y de NEO</h2>
+    <h2 class="section-title">Repositorios personales y de trabajo</h2>
     <p class="subhead small">Cada tarjeta es un proyecto de <code class="mono">~/dev/GitHub</code> o <code class="mono">~/dev/GITHUB-NEO</code>. Verde = tiene <code>CLAUDE.md</code>. "Generar análisis" cruza CLAUDE.md, tu nota privada (si la creaste) y actividad de git para estimar descripción, % de avance, mejoras concretas y qué skill de Claude Code le conviene a cada proyecto — nunca se pushea nada, la nota privada vive solo en tu disco.</p>
     <div class="org-toggle" id="projectOrgToggle">
       <button class="org-toggle-btn active" data-org="personal">Personal</button>
-      <button class="org-toggle-btn" data-org="neo">NEO Consulting</button>
+      <button class="org-toggle-btn" data-org="neo">Trabajo</button>
     </div>
     <div class="ideas-toolbar">
       <button id="projectStatusGenerate" class="graphify-update-btn">Generar análisis</button>
@@ -318,11 +437,11 @@
     <p>
       <strong>Tokens y sesiones:</strong> leo directamente los archivos <code>.jsonl</code> de cada sesión en
       <code>~/.claude*/projects/**</code> — cada línea trae el <code>usage</code> real que devolvió la API por turno.<br/>
-      <strong>Costos:</strong> estimación con la tabla de precios de Anthropic (junio 2026); no son montos facturados reales.<br/>
+      <strong>Referencia API:</strong> precios verificados el 29 de septiembre de 2026, con creación de caché de 5 minutos y de una hora por separado. No es una factura ni una deuda de tus planes.<br/>
       <strong>Cuentas:</strong> leo el campo <code>oauthAccount</code> de cada <code>.claude.json</code> (email, organización, tipo de cuenta).<br/>
       <strong>Skills:</strong> recorro <code>skills/</code> y <code>plugins/marketplaces/</code> de cada perfil y parseo el frontmatter de cada <code>SKILL.md</code>.<br/>
       <strong>Historial:</strong> leo <code>~/.claude*/history.jsonl</code>, cada línea es una entrada del CLI.<br/>
-      Todo se recalcula en cada carga (con una caché de 8s para no ralentizar el auto-refresh); nada se envía a internet.
+      Las consultas de uso son locales, con una caché de 8s. Los generadores opcionales, desactivados por defecto, pueden enviar contexto a proveedores de IA al habilitarlos.
     </p>
   </footer>
 </main>
@@ -400,27 +519,20 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="/chart.umd.min.js"></script>
 <script src="/app.js"></script>
-
+<script src="/job-match.js"></script>
+<script src="/radar.js"></script>
+<script src="/jobs.js"></script>
+<script src="/studies.js"></script>
 <dialog id="taskDialog" class="task-dialog" aria-labelledby="taskDialogTitle">
   <form id="taskForm"><header><div><span class="eyebrow">CONTEXTO COMPARTIDO</span><h2 id="taskDialogTitle">Nueva tarea</h2></div><button type="button" id="taskClose" class="ghost-btn" aria-label="Cerrar editor de tarea">✕</button></header>
     <label>Título<input name="title" required maxlength="180" placeholder="Un resultado concreto" /></label>
     <div class="task-form-grid"><label>Proyecto<select name="project" required></select></label><label>Responsable<select name="agent"><option value="david">David</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="grok">Grok</option><option value="agy">Antigravity</option></select></label><label>Estado<select name="status"><option value="backlog">Por hacer</option><option value="doing">En curso</option><option value="review">En revisión</option><option value="done">Listo</option></select></label><label>Prioridad<select name="priority"><option value="medium">Media</option><option value="high">Alta</option><option value="low">Baja</option></select></label></div>
-    <label>Objetivo<textarea name="description" maxlength="6000" rows="3" placeholder="Qué hay que hacer y por qué"></textarea></label>
-    <label>Criterios de aceptación<textarea name="acceptance" maxlength="3000" rows="2" placeholder="Cómo sabemos que está terminado; pruebas y evidencia"></textarea></label>
-    <label>Contexto para la siguiente IA<textarea name="handoff" maxlength="6000" rows="3" placeholder="Avance, archivos, decisiones, pruebas y bloqueos"></textarea></label>
-    <div class="task-extra-fields">
-      <label>Vence<input name="due" type="date" /></label>
-      <label>Próximo paso<input name="nextAction" maxlength="500" placeholder="Siguiente acción concreta" /></label>
-      <label>Bloqueo<input name="blocker" maxlength="500" placeholder="Qué impide avanzar (si hay)" /></label>
-    </div>
+    <label>Objetivo<textarea name="description" maxlength="6000" rows="3" placeholder="Qué hay que hacer y por qué"></textarea></label><label>Criterios de aceptación<textarea name="acceptance" maxlength="3000" rows="2" placeholder="Cómo sabemos que está terminado; pruebas y evidencia"></textarea></label><label>Contexto para la siguiente IA<textarea name="handoff" maxlength="6000" rows="3" placeholder="Avance, archivos, decisiones, pruebas y bloqueos"></textarea></label>
     <p id="taskFeedback" role="status" aria-live="polite"></p><footer><button id="taskArchive" type="button" class="ghost-btn" hidden>Archivar</button><button id="taskSave" class="radar-button primary">Guardar tarea</button></footer>
   </form>
 </dialog>
 <script src="/kanban.js"></script>
-
 </body>
 </html>

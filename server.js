@@ -5,13 +5,22 @@ import os from "node:os";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { validateRequest, resolveProject, readJson } from "./lib/security.js";
+import { createProviderStore } from "./lib/providers.js";
+import { takeUsageDelta } from "./lib/usage.js";
+import { getPricing, estimateCost, pricingCoverage } from "./lib/pricing.js";
+import { createRadarStore } from "./lib/radar.js";
+import { extractPdfText } from "./lib/cv.js";
 import { createKanbanStore, taskBrief, syncFromMem0, seedProjects } from "./lib/kanban.js";
 import { createPlanner } from "./lib/planner.js";
-import { validateRequest, resolveProject, readJson } from "./lib/security.js";
+import { createJobSearchStore } from "./lib/jobsearch.js";
+import { createApplyFlow } from "./lib/applyflow.js";
+import { createStudiesStore } from "./lib/studies.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
-const PORT = process.env.PORT || 4949;
+const PORT = Number(process.env.PORT || 4949);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("PORT inválido");
 const RAW_CACHE_TTL_MS = 8000;
 const SKILLS_CACHE_TTL_MS = 60000;
 
@@ -28,12 +37,21 @@ const GRAPHIFY_TARGETS = [
 const GRAPHIFY_BIN = path.join(HOME, ".local", "bin", "graphify");
 const graphifyJobs = new Map();
 
-const LOCAL_GITHUB_DIR = path.join(HOME, "dev", "GitHub");
-const NEO_GITHUB_DIR = path.join(HOME, "dev", "GITHUB-NEO");
-const OBSIDIAN_VAULT = path.join(HOME, "Documents", "obsidian-vault");
-const IDEAS_DIR = path.join(HOME, ".claude-dashboard");
-const IDEAS_FILE = path.join(IDEAS_DIR, "ideas.json");
+const LOCAL_GITHUB_DIR = process.env.DASHBOARD_PROJECTS_DIR || path.join(HOME, "dev", "GitHub");
+const NEO_GITHUB_DIR = process.env.DASHBOARD_WORK_DIR || path.join(HOME, "dev", "GITHUB-NEO");
+const OBSIDIAN_VAULT = process.env.DASHBOARD_VAULT_DIR || path.join(HOME, "Documents", "obsidian-vault");
+const IDEAS_DIR = process.env.DASHBOARD_DATA_DIR || path.join(HOME, ".claude-dashboard");
+const AI_ENABLED = (() => {
+  if (process.env.DASHBOARD_ENABLE_AI != null) return process.env.DASHBOARD_ENABLE_AI === '1';
+  try { return JSON.parse(fs.readFileSync(path.join(IDEAS_DIR, 'ai-settings.json'), 'utf8')).enabled === true; } catch { return false; }
+})();
+const providerStore = createProviderStore({ home: HOME, dataDir: IDEAS_DIR });
+const radarStore = createRadarStore({ dataDir: IDEAS_DIR });
 const kanbanStore = createKanbanStore({ dataDir: IDEAS_DIR });
+const JOBSEARCH_DIR = process.env.DASHBOARD_JOBSEARCH_DIR || path.join(LOCAL_GITHUB_DIR, "ai-job-search-review", "ai-job-search");
+const studiesStore = createStudiesStore({ repoDir: JOBSEARCH_DIR });
+const jobSearchStore = createJobSearchStore({ repoDir: JOBSEARCH_DIR, kanbanStore, kanbanProject: "ai-job-search-review" });
+const IDEAS_FILE = path.join(IDEAS_DIR, "ideas.json");
 let ideasJob = { status: "idle", startedAt: null, finishedAt: null, error: null };
 
 // Luminance-separated (verified via WCAG relative-luminance contrast, not eyeballed) so
@@ -43,36 +61,6 @@ let ideasJob = { status: "idle", startedAt: null, finishedAt: null, error: null 
 // other; a prior version of this array had its first two entries at an exact 1.0 tie.
 const ACCOUNT_COLORS = ["#12106B", "#D21E3C", "#0E6E6E", "#8A5A16"];
 const MODEL_PALETTE = ["#12106B", "#D21E3C", "#0E6E6E", "#8A5A16", "#5B3FA0"];
-
-// Pricing table — $ per million tokens. Source: claude.com/pricing as of 2026-06.
-const PRICING_PER_MTOK = {
-  "claude-fable-5":    { input: 10.00, output: 50.00, cacheWrite: 12.50, cacheRead: 1.00 },
-  "claude-opus-4-8":   { input:  5.00, output: 25.00, cacheWrite:  6.25, cacheRead: 0.50 },
-  "claude-opus-4-7":   { input:  5.00, output: 25.00, cacheWrite:  6.25, cacheRead: 0.50 },
-  "claude-opus-4-6":   { input:  5.00, output: 25.00, cacheWrite:  6.25, cacheRead: 0.50 },
-  "claude-opus-4-5":   { input:  5.00, output: 25.00, cacheWrite:  6.25, cacheRead: 0.50 },
-  "claude-opus-4-1":   { input: 15.00, output: 75.00, cacheWrite: 18.75, cacheRead: 1.50 },
-  "claude-opus-4":     { input: 15.00, output: 75.00, cacheWrite: 18.75, cacheRead: 1.50 },
-  "claude-sonnet-4-6": { input:  3.00, output: 15.00, cacheWrite:  3.75, cacheRead: 0.30 },
-  "claude-sonnet-4-5": { input:  3.00, output: 15.00, cacheWrite:  3.75, cacheRead: 0.30 },
-  "claude-sonnet-4":   { input:  3.00, output: 15.00, cacheWrite:  3.75, cacheRead: 0.30 },
-  "claude-haiku-4-5":  { input:  1.00, output:  5.00, cacheWrite:  1.25, cacheRead: 0.10 },
-  "claude-haiku-3-5":  { input:  0.80, output:  4.00, cacheWrite:  1.00, cacheRead: 0.08 },
-};
-
-function getPricing(model) {
-  if (PRICING_PER_MTOK[model]) return PRICING_PER_MTOK[model];
-  const keys = Object.keys(PRICING_PER_MTOK).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
-    if (model === key || model.startsWith(key + "-")) return PRICING_PER_MTOK[key];
-  }
-  return PRICING_PER_MTOK["claude-opus-4-8"];
-}
-
-function estimateCost(model, input, output, cacheCreate, cacheRead) {
-  const p = getPricing(model);
-  return (input * p.input + output * p.output + cacheCreate * p.cacheWrite + cacheRead * p.cacheRead) / 1e6;
-}
 
 async function calcDirSize(dir) {
   try {
@@ -143,9 +131,7 @@ function startGraphifyUpdate(targetKey) {
   const args = hasGraph
     ? ["update", target.sourcePath]
     : ["extract", target.sourcePath, "--backend", "ollama", "--model", "glm-4.7-flash:latest"];
-  const env = hasGraph
-    ? process.env
-    : { ...process.env, OLLAMA_BASE_URL: "https://neo-ollama-vm.tail04c000.ts.net/v1", OLLAMA_API_KEY: "ollama" };
+  const env = process.env;
 
   const child = spawn(GRAPHIFY_BIN, args, { stdio: ["ignore", "pipe", "pipe"], env });
   child.stdout.on("data", (d) => (job.log += d.toString()));
@@ -194,16 +180,30 @@ function readClaudeMdSummaries(dir, orgLabel) {
 // llegar recortado al mínimo del sistema (sin /opt/homebrew/bin ni
 // ~/.local/bin) y el spawn revienta con ENOENT aunque el binario exista.
 function resolveBin(name) {
-  for (const dir of [path.join(HOME, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"]) {
+  for (const dir of [...(process.env.PATH || "").split(path.delimiter), path.join(HOME, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"]) {
     const full = path.join(dir, name);
     if (fs.existsSync(full)) return full;
   }
   return name; // deja que el PATH del proceso lo resuelva si lo tiene
 }
 const CLAUDE_BIN = resolveBin("claude");
+const applyFlow = createApplyFlow({ repoDir: JOBSEARCH_DIR, dataDir: IDEAS_DIR, bin: CLAUDE_BIN, home: HOME, jobSearchStore, kanbanStore });
 const GROK_BIN = resolveBin("grok");
 const AGY_BIN = resolveBin("agy");
 const planTasks = createPlanner({ bin: CLAUDE_BIN, cwd: os.tmpdir() });
+
+function collectMcpServers() {
+  const servers = [];
+  for (const profile of PROFILES) {
+    try {
+      const config = JSON.parse(fs.readFileSync(profile.credsPath, "utf8"));
+      for (const [name, settings] of Object.entries(config.mcpServers || {})) {
+        servers.push({ name, profile: profile.key, transport: settings.type || (settings.url ? "http" : "stdio") });
+      }
+    } catch {}
+  }
+  return servers; // Never expose command arguments, tokens, env or headers.
+}
 
 function execCapture(cmd, args, { timeoutMs = 15000, input, cwd, onSpawn } = {}) {
   return new Promise((resolve) => {
@@ -245,7 +245,7 @@ async function runWithFallback({ prompt, timeoutMs, cwd, grokArgs, claudeArgs, v
   // truncated-narration output still exits 0, so every call site must pass
   // `verify` to check the actual thing it needed (a JSON array in the text,
   // a file that should now exist), not just "did the process exit clean."
-  const grok = await execCapture(GROK_BIN, ["-p", prompt, "--no-auto-update", "--permission-mode", "bypassPermissions", ...grokArgs], { timeoutMs, cwd });
+  const grok = await execCapture(GROK_BIN, ["-p", prompt, "--no-auto-update", "--permission-mode", "dontAsk", ...grokArgs], { timeoutMs, cwd });
   const grokOk = grok.code === 0 && (!verify || verify(grok));
   if (grokOk) return { ...grok, provider: "grok" };
 
@@ -317,7 +317,7 @@ function buildIdeasPrompt({ localRepos, neoRepos, remoteRepos, activity, notes }
     ? notes.map((n) => `- [${n.area}] ${n.name}: ${n.excerpt.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")
     : "(sin notas)";
 
-  return `Eres un asesor senior de innovación en IA para David Gallo, quien trabaja en el AI Lab de NEO Consulting y necesita proponer 2 ideas de aplicación de IA por mes para sustentar su ascenso.
+  return `Eres un asesor senior de innovación en IA para el usuario, quien trabaja en el AI Lab de su organización y necesita proponer 2 ideas de aplicación de IA por mes para sustentar su ascenso.
 
 Antes de proponer, investiga qué se está discutiendo AHORA MISMO en el sector de IA:
 - Revisa con WebFetch qué hay en https://github.com/trending (y si aplica, https://github.com/trending/python?since=weekly o https://github.com/trending/typescript?since=weekly) para ver qué proyectos de IA están ganando tracción esta semana.
@@ -325,13 +325,13 @@ Antes de proponer, investiga qué se está discutiendo AHORA MISMO en el sector 
 - Usa WebSearch para lanzamientos recientes, patrones que están adoptando otras consultoras/AI labs, y tendencias de agentes/modelos/herramientas.
 Las ideas deben sentirse actuales y citar algo concreto que encontraste (un repo, un proyecto, un lanzamiento) — no genéricas de hace dos años.
 
-Con esa investigación más la evidencia de abajo (sus proyectos reales, su actividad reciente y sus notas), propone EXACTAMENTE 2 ideas para este mes. No tienen que ser inventos originales del sector — está bien que sean la adaptación de una tendencia externa a NEO Consulting, o una mejora concreta solo para NEO — pero deben ser INNOVADORAS o CURIOSAS dentro de su propio contexto: algo que no sea obvio, que conecte una tendencia actual del sector con algo que él ya tiene construido, no la repetición literal de un patrón que ya hizo antes.
+Con esa investigación más la evidencia de abajo (sus proyectos reales, su actividad reciente y sus notas), propone EXACTAMENTE 2 ideas para este mes. No tienen que ser inventos originales del sector — está bien que sean la adaptación de una tendencia externa a su organización, o una mejora concreta solo para NEO — pero deben ser INNOVADORAS o CURIOSAS dentro de su propio contexto: algo que no sea obvio, que conecte una tendencia actual del sector con algo que él ya tiene construido, no la repetición literal de un patrón que ya hizo antes.
 
 Cada idea debe ser algo que él pueda defender frente a su gerencia con evidencia de que ya tiene el contexto técnico para ejecutarla, Y que suene a que está a la vanguardia del sector, no reciclando lo de siempre.
 
 ${repoBlock(localRepos, "Repos personales (~/dev/GitHub)")}
 
-${repoBlock(neoRepos, "Repos de NEO Consulting (~/dev/GITHUB-NEO)")}
+${repoBlock(neoRepos, "Repos de su organización (~/dev/GITHUB-NEO)")}
 
 ${repoBlock(remoteRepos, "Repos remotos en GitHub")}
 
@@ -351,9 +351,9 @@ Responde ÚNICAMENTE con un JSON array de exactamente 2 objetos, sin texto antes
 }
 
 function buildCustomIdeaPrompt(customIdea, { localRepos, neoRepos, remoteRepos, activity, notes }) {
-  return `Eres un asesor senior de innovación en IA para David Gallo, quien trabaja en el AI Lab de NEO Consulting.
+  return `Eres un asesor senior de innovación en IA para el usuario, quien trabaja en el AI Lab de su organización.
 
-David tuvo esta idea y quiere que la investigues a fondo antes de decidir si la propone a su gerencia:
+el usuario tuvo esta idea y quiere que la investigues a fondo antes de decidir si la propone a su gerencia:
 
 "${customIdea}"
 
@@ -364,7 +364,7 @@ Investiga en serio antes de opinar:
 
 ${repoBlock(localRepos, "Repos personales (~/dev/GitHub)")}
 
-${repoBlock(neoRepos, "Repos de NEO Consulting (~/dev/GITHUB-NEO)")}
+${repoBlock(neoRepos, "Repos de su organización (~/dev/GITHUB-NEO)")}
 
 ${repoBlock(remoteRepos, "Repos remotos en GitHub")}
 
@@ -546,7 +546,7 @@ async function gatherAllSkills() {
 
 function buildProjectStatusPrompt(projects, skills) {
   const block = projects.map((p) => {
-    const lines = [`### ${p.name} (${p.org === "neo" ? "NEO Consulting" : "personal"})`];
+    const lines = [`### ${p.name} (${p.org === "neo" ? "su organización" : "personal"})`];
     lines.push(p.daysSinceCommit === null
       ? "Actividad git: sin commits o no es repo git"
       : `Actividad git: último commit hace ${p.daysSinceCommit} días${p.dirty ? ", con cambios sin commitear" : ""}`);
@@ -559,7 +559,7 @@ function buildProjectStatusPrompt(projects, skills) {
     ? skills.map((s) => `- ${s.name}: ${(s.description || "").replace(/\s+/g, " ").slice(0, 200)}`).join("\n")
     : "(sin skills instaladas)";
 
-  return `Eres un asesor técnico que ayuda a David Gallo a entender en qué estado está cada uno de sus proyectos de GitHub — tanto personales como de NEO Consulting.
+  return `Eres un asesor técnico que ayuda a el usuario a entender en qué estado está cada uno de sus proyectos de GitHub — tanto personales como de su organización.
 
 Para cada proyecto de abajo, evalúa con la evidencia dada (CLAUDE.md, notas privadas del autor si las hay, y actividad de git) y responde con:
 - "description": 1 frase de qué hace el proyecto (si no hay CLAUDE.md, infiere del nombre y dilo con cautela)
@@ -832,7 +832,7 @@ const interviewJobs = new Map(); // sessionId -> { status: "running"|"done"|"err
 const interviewChildren = new Map(); // sessionId -> in-flight agy/claude child process, so cancel can kill it
 
 // Editar a mano cuando cambie una certificación (ej. al pasar de SAA a SAP).
-const DAVID_CLOUD_BACKGROUND = `Certificaciones actuales: AWS Solutions Architect Associate (SAA), AWS AI Practitioner, AWS ML Engineer Associate, AWS Security Specialty, AWS SysOps/CloudOps, GCP Associate Cloud Engineer (ACE). Trabaja como Cloud AI Trainee en NEO Consulting (stack GCP: BigQuery, Vertex AI, Cloud Run, Pub/Sub, Cloud SQL); antes fue Junior Cloud Specialist en AWS. Ya construyó, en producción-adyacente: ECS Fargate en Graviton2/ARM64 con ALB + CloudFront, Cognito + API Gateway + Lambda + DynamoDB, inferencia PyTorch en SageMaker, microservicios FastAPI en GCP con Firestore.`;
+const INTERVIEW_BACKGROUND = process.env.DASHBOARD_INTERVIEW_BACKGROUND || "Desarrollador que practica entrevistas de arquitectura cloud. Calibra el nivel a partir de sus respuestas y del contexto que proporciona.";
 
 const INTERVIEW_FOCUS_LABEL = { aws: "AWS", gcp: "GCP", azure: "Azure", kubernetes: "Kubernetes", general: "multi-cloud / arquitectura general" };
 
@@ -887,26 +887,14 @@ function sanitizeJsonControlChars(str) {
   return out;
 }
 
-function readJsonBody(req) {
-  return new Promise((resolve) => {
-    let data = "";
-    req.on("data", (c) => {
-      data += c;
-      if (data.length > 2_000_000) req.destroy();
-    });
-    req.on("end", () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
-    });
-    req.on("error", () => resolve({}));
-  });
-}
+const readJsonBody = readJson;
 
 function buildInterviewPersonaBlock(focus, contextBlock, memoryContext) {
   const hasMemory = memoryContext && !/sin historial previo/i.test(memoryContext);
-  return `Eres un entrevistador Staff/Principal Cloud Solutions Architect entrevistando a David Gallo para un puesto de Cloud Architect. No eres un asistente amable — eres un entrevistador real, exigente pero justo, del tipo que contrata gente que puede sostener sus decisiones bajo presión. Tienes acceso a búsqueda web: si algo que dice David depende de un precio, límite o servicio concreto de AWS/GCP, verifícalo en vez de asumir que tu conocimiento previo sigue vigente.
+  return `Eres un entrevistador Staff/Principal Cloud Solutions Architect entrevistando a el usuario para un puesto de Cloud Architect. No eres un asistente amable — eres un entrevistador real, exigente pero justo, del tipo que contrata gente que puede sostener sus decisiones bajo presión. Tienes acceso a búsqueda web: si algo que dice el usuario depende de un precio, límite o servicio concreto de AWS/GCP, verifícalo en vez de asumir que tu conocimiento previo sigue vigente.
 
-Contexto real de David (no se lo repitas, úsalo solo para calibrar la dificultad — ni trivial para su nivel, ni imposible):
-${DAVID_CLOUD_BACKGROUND}
+Contexto real de el usuario (no se lo repitas, úsalo solo para calibrar la dificultad — ni trivial para su nivel, ni imposible):
+${INTERVIEW_BACKGROUND}
 ${contextBlock ? `\nEvidencia adicional de proyectos reales que ya construyó:\n${contextBlock}` : ""}
 ${hasMemory ? `\nPatrones de errores de sus entrevistas de práctica anteriores (verifica activamente si los repite; si lo hace, dilo explícito porque sería un error repetido, no nuevo):\n${memoryContext}` : ""}
 
@@ -922,7 +910,7 @@ Formato "system design interview": planteas UN problema de arquitectura abierto 
    - "study_plan": 3-5 temas concretos a estudiar, derivados directamente de los errores reales de TODA la entrevista (y de los patrones de entrevistas anteriores si los hay) — no genéricos. Cada uno con por qué le hizo falta y cómo estudiarlo (un recurso o forma concreta de practicarlo, no "lee la documentación").
    - "career_guidance": una evaluación honesta de nivel actual, no aspiracional. Usa tu acceso a búsqueda web para verificar cifras reales y recientes de compensación en vez de inventarlas — busca rangos salariales actuales para el rol que le recomiendas, tanto en el mercado de Perú/Lima como en remoto LatAm-facing (USD). Si el desempeño de la entrevista no da para el título de "Cloud Architect" todavía, dilo directo y sugiere el puesto real que sí puede pedir hoy (ej. "Cloud Engineer Semi-Senior", no "Architect").
 
-Tu turno tiene 6 partes: "speak" (lo que le dices a David), "mistakes" (array de errores concretos de este turno puntual, vacío [] si no cometió ninguno), "verdict" (null salvo que sea el turno de cierre), "done" (true solo en el turno de cierre), "study_plan" (array vacío [] salvo en el turno de cierre) y "career_guidance" (null salvo en el turno de cierre).`;
+Tu turno tiene 6 partes: "speak" (lo que le dices a el usuario), "mistakes" (array de errores concretos de este turno puntual, vacío [] si no cometió ninguno), "verdict" (null salvo que sea el turno de cierre), "done" (true solo en el turno de cierre), "study_plan" (array vacío [] salvo en el turno de cierre) y "career_guidance" (null salvo en el turno de cierre).`;
 }
 
 // El schema (--json-schema en agy) ya fuerza estas 4 claves — pedirle además
@@ -939,7 +927,7 @@ function buildInterviewTurnPrompt(session, { strictJsonInstruction = false } = {
     return `${persona}${jsonInstruction}\n\nEste es el primer turno. Plantea el problema de arquitectura inicial siguiendo el formato de arriba.`;
   }
   const transcript = session.turns
-    .map((t) => (t.role === "interviewer" ? `[Entrevistador]: ${t.speak}` : `[David]: ${t.content}`))
+    .map((t) => (t.role === "interviewer" ? `[Entrevistador]: ${t.speak}` : `[el usuario]: ${t.content}`))
     .join("\n\n");
   return `${persona}${jsonInstruction}\n\n### Transcripción de la entrevista hasta ahora\n${transcript}\n\nResponde con el siguiente turno del entrevistador.`;
 }
@@ -952,20 +940,20 @@ async function gatherInterviewContext() {
     .join("\n");
 }
 
-// David ya tiene mem0 self-hosted como "segundo cerebro" (registrado a nivel de
+// el usuario ya tiene mem0 self-hosted como "segundo cerebro" (registrado a nivel de
 // usuario, `claude mcp list` lo confirma conectado). En vez de gastar su cuota
 // de Claude en cada turno de la entrevista, Claude se usa SOLO para estas dos
 // llamadas puntuales por sesión (leer y escribir en mem0) — el trabajo pesado,
 // repetido, de cada turno lo hace Gemini (ver runInterviewModelTurn).
 async function recallInterviewMemory() {
   const prompt = `Busca en mem0 (search_memories) patrones de errores o feedback de entrevistas de práctica de Cloud Architect guardados anteriormente. Responde SOLO en texto plano, máximo 5 líneas, con los errores recurrentes más relevantes si existen, o la frase exacta "sin historial previo" si no encuentras nada relacionado. No uses ninguna otra tool ni escribas nada más.`;
-  // mem0 corre vía `uvx` (self-hosted, ver DAVID_CLOUD_BACKGROUND/CLAUDE.md) —
+  // mem0 corre vía `uvx` (self-hosted, ver INTERVIEW_BACKGROUND/CLAUDE.md) —
   // el arranque en frío del entorno uv tarda ~90s, medido corriéndolo de
   // verdad; un timeout de 60s lo mataba a mitad de camino y esto silenciosamente
   // devolvía null cada vez.
   const res = await execCapture(CLAUDE_BIN, ["-p", prompt, "--permission-mode", "dontAsk", "--allowedTools", "mcp__mem0__search_memories"], { timeoutMs: 150000 });
   // No confiar solo en el exit code: confirmado corriéndolo a mano que un hook
-  // de SessionEnd de David (session-end-obsidian.sh) falla bajo el PATH
+  // de SessionEnd de el usuario (session-end-obsidian.sh) falla bajo el PATH
   // recortado de launchd y deja `claude -p` en exit 1 aunque la respuesta en
   // stdout ya sea correcta ("sin historial previo"). Si hay texto, es válido.
   const output = res.out.trim();
@@ -1034,7 +1022,7 @@ const INTERVIEW_JSON_SCHEMA = JSON.stringify({
 });
 
 // Gemini (via `agy`, el CLI de Antigravity — reutiliza el login de Google de
-// David, sin API key) hace el turno pesado: tiene grounding de búsqueda nativo
+// el usuario, sin API key) hace el turno pesado: tiene grounding de búsqueda nativo
 // (confirmado: sabe la fecha real y eventos recientes de AWS sin que se lo
 // pidamos explícito) y `--json-schema` le fuerza el shape exacto sin que haga
 // falta regex ni parchar caracteres de control — el propio CLI ya entrega
@@ -1049,7 +1037,7 @@ async function runInterviewModelTurn(session) {
     "--model", "gemini-3.1-pro-high",
     "--json-schema", INTERVIEW_JSON_SCHEMA,
     "--output-format", "json",
-    "--dangerously-skip-permissions",
+    "--sandbox",
   ], { timeoutMs: 120000, onSpawn });
   if (gemini.code === 0) {
     try {
@@ -1249,6 +1237,7 @@ async function collectProfileRaw(profile) {
   if (!fs.existsSync(projectsDir)) return raw;
 
   const jsonlFiles = (await walk(projectsDir)).filter((f) => f.endsWith(".jsonl"));
+  const seenUsage = new Map();
 
   for (const file of jsonlFiles) {
     const sessionId = path.basename(file, ".jsonl");
@@ -1296,8 +1285,9 @@ async function collectProfileRaw(profile) {
         }
       }
 
-      const usage = obj.message?.usage;
-      if (!usage || obj.type !== "assistant" || !day) continue;
+      const snapshot = obj.message?.usage;
+      if (!snapshot || obj.type !== "assistant" || !day) continue;
+      const usage = takeUsageDelta(seenUsage, obj.message?.id, snapshot, { includeCacheTTL: true });
 
       const model = obj.message.model || "unknown";
       const input = usage.input_tokens || 0;
@@ -1305,16 +1295,18 @@ async function collectProfileRaw(profile) {
       const cacheRead = usage.cache_read_input_tokens || 0;
       const cacheCreate = usage.cache_creation_input_tokens || 0;
       const fresh = input + output + cacheCreate;
-      if (fresh + cacheRead === 0) continue;
+      if (fresh + cacheRead === 0 && !usage.cache1h && !usage.cacheUnknown) continue;
 
-      const cost = estimateCost(model, input, output, cacheCreate, cacheRead);
+      const cost = estimateCost(model, input, output, cacheCreate, cacheRead, usage.cache1h) || 0;
 
       raw.byDayModel[day] ??= {};
-      raw.byDayModel[day][model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUSD: 0 };
+      raw.byDayModel[day][model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cache1h: 0, cacheUnknown: 0, costUSD: 0 };
       raw.byDayModel[day][model].input += input;
       raw.byDayModel[day][model].output += output;
       raw.byDayModel[day][model].cacheRead += cacheRead;
       raw.byDayModel[day][model].cacheCreate += cacheCreate;
+      raw.byDayModel[day][model].cache1h += usage.cache1h;
+      raw.byDayModel[day][model].cacheUnknown += usage.cacheUnknown;
       raw.byDayModel[day][model].costUSD += cost;
 
       session.totals.input += input;
@@ -1386,11 +1378,13 @@ function computeAccountView(acc, { fromDay = null, toDay = null } = {}) {
     for (const [model, m] of Object.entries(models)) {
       const fresh = m.input + m.output + m.cacheCreate;
       const total = fresh + m.cacheRead;
-      byModel[model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, total: 0, fresh: 0, costUSD: 0 };
+      byModel[model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cache1h: 0, cacheUnknown: 0, total: 0, fresh: 0, costUSD: 0 };
       byModel[model].input += m.input;
       byModel[model].output += m.output;
       byModel[model].cacheRead += m.cacheRead;
       byModel[model].cacheCreate += m.cacheCreate;
+      byModel[model].cache1h += m.cache1h || 0;
+      byModel[model].cacheUnknown += m.cacheUnknown || 0;
       byModel[model].total += total;
       byModel[model].fresh += fresh;
       byModel[model].costUSD += m.costUSD || 0;
@@ -1508,8 +1502,8 @@ async function buildPayload({ days, account } = {}) {
     for (const [day, models] of Object.entries(raw.byDayModel)) {
       acc.byDayModel[day] ??= {};
       for (const [model, m] of Object.entries(models)) {
-        acc.byDayModel[day][model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUSD: 0 };
-        for (const k of ["input", "output", "cacheRead", "cacheCreate", "costUSD"]) acc.byDayModel[day][model][k] += m[k] || 0;
+        acc.byDayModel[day][model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cache1h: 0, cacheUnknown: 0, costUSD: 0 };
+        for (const k of ["input", "output", "cacheRead", "cacheCreate", "cache1h", "cacheUnknown", "costUSD"]) acc.byDayModel[day][model][k] += m[k] || 0;
       }
     }
     for (const [day, meta] of Object.entries(raw.byDayMeta)) {
@@ -1618,8 +1612,8 @@ async function buildPayload({ days, account } = {}) {
   const byModel = {};
   for (const a of accounts) {
     for (const [model, m] of Object.entries(a.byModel)) {
-      byModel[model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, total: 0, fresh: 0, costUSD: 0 };
-      for (const k of ["input", "output", "cacheRead", "cacheCreate", "total", "fresh", "costUSD"]) byModel[model][k] += m[k] || 0;
+      byModel[model] ??= { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cache1h: 0, cacheUnknown: 0, total: 0, fresh: 0, costUSD: 0 };
+      for (const k of ["input", "output", "cacheRead", "cacheCreate", "cache1h", "cacheUnknown", "total", "fresh", "costUSD"]) byModel[model][k] += m[k] || 0;
     }
   }
 
@@ -1671,61 +1665,157 @@ async function buildPayload({ days, account } = {}) {
     skills,
     sessions,
     modelPalette: MODEL_PALETTE,
+    pricingWarnings: Object.keys(byModel).filter((model) => getPricing(model).unknown),
+    pricing: pricingCoverage(byModel),
+    mcpServers: collectMcpServers(),
     tools,
     insights: { cacheHitRate, monthlyRunRate, items: insights },
   };
 }
 
-const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json" };
+const MIME = { ".html": "text/html", ".css": "text/css", ".js": "application/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
 
 const server = http.createServer(async (req, res) => {
   try {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    const denied = validateRequest(req, PORT);
+    if (denied) { res.writeHead(denied, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Solicitud rechazada: usa la interfaz local del dashboard" })); return; }
     const url = new URL(req.url, "http://localhost");
 
-    if (url.pathname.startsWith("/api/kanban")) {
-      const denied = validateRequest(req, PORT);
-      if (denied) { res.writeHead(denied, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Solicitud rechazada: usa la interfaz local del dashboard" })); return; }
-    }
-
-    if (url.pathname === "/api/kanban" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
+    if (url.pathname === '/api/kanban' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN) })); return;
     }
-    if (url.pathname === "/api/kanban" && req.method === "POST") {
+    if (url.pathname === '/api/kanban' && req.method === 'POST') {
       const body = await readJson(req);
-      res.writeHead(200, { "Content-Type": "application/json" });
+      if (body.action === 'create' || (body.action === 'update' && body.task?.project)) resolveProject(LOCAL_GITHUB_DIR, body.task?.project);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(kanbanStore.mutate(body))); return;
     }
-    if (url.pathname === "/api/kanban/sync-mem0" && req.method === "POST") {
-      const meta = await syncFromMem0(kanbanStore, {
-        qdrantUrl: process.env.MEM0_QDRANT_URL || "http://127.0.0.1:6333",
-        collection: process.env.MEM0_COLLECTION || "mem0_mcp_selfhosted",
-      });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    if (url.pathname === '/api/jobsearch' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(jobSearchStore.get())); return;
     }
-    if (url.pathname === "/api/kanban/seed-projects" && req.method === "POST") {
-      const body = await readJson(req, 65536);
-      const meta = seedProjects(kanbanStore, body.projects || []);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    if (url.pathname === '/api/jobsearch/decide' && req.method === 'POST') {
+      const body = await readJson(req, 2048);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(jobSearchStore.decide(body))); return;
     }
-    if (url.pathname === "/api/kanban/brief" && req.method === "GET") {
-      const task = kanbanStore.get().tasks.find(t => t.id === url.searchParams.get("id"));
-      if (!task) throw Object.assign(new Error("Tarea no encontrada"), { status: 404 });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ text: taskBrief(task) })); return;
+    if (url.pathname === '/api/jobsearch/mark-sent' && req.method === 'POST') {
+      const body = await readJson(req, 2048);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(jobSearchStore.markSent(body))); return;
     }
-    if (url.pathname === "/api/kanban/plan" && req.method === "POST") {
-      const body = await readJson(req, 8192);
-      const result = await planTasks({ project: body.project, goal: body.goal, tasks: kanbanStore.get().tasks });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(result)); return;
+    if (url.pathname === '/api/jobsearch/apply' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(url.searchParams.has('ref') ? applyFlow.status(url.searchParams.get('ref')) : applyFlow.list())); return;
+    }
+    if (url.pathname.startsWith('/api/jobsearch/apply/') && req.method === 'POST') {
+      const action = url.pathname.slice('/api/jobsearch/apply/'.length);
+      if (!['start', 'answer', 'revise', 'approve', 'cancel'].includes(action)) throw Object.assign(new Error('Acción inválida'), { status: 404 });
+      if (['start', 'answer', 'revise'].includes(action) && !AI_ENABLED) throw Object.assign(new Error('Generadores desactivados. Activa DASHBOARD_ENABLE_AI=1 para postular con Claude.'), { status: 403 });
+      const body = await readJson(req, 16384);
+      const ref = Number(body.ref);
+      if (!Number.isInteger(ref) || ref < 1) throw Object.assign(new Error('Número de oferta inválido'), { status: 400 });
+      const result = action === 'start' ? applyFlow.start(ref) : action === 'answer' ? applyFlow.answer(ref, body.answers) : action === 'revise' ? applyFlow.revise(ref, body.feedback) : action === 'approve' ? applyFlow.approve(ref) : applyFlow.cancel(ref);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return;
+    }
+    if (url.pathname === '/api/jobsearch/pdf' && req.method === 'GET') {
+      const full = applyFlow.pdf(url.searchParams.get('path'));
+      if (!full) throw Object.assign(new Error('PDF no disponible'), { status: 404 });
+      // Same-origin framing only, so the preview panel can embed it.
+      res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'self'");
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline' });
+      fs.createReadStream(full).pipe(res); return;
+    }
+    if (url.pathname === '/api/studies' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(studiesStore.get())); return;
+    }
+    if (url.pathname === '/api/studies/mark' && req.method === 'POST') {
+      const body = await readJson(req, 1024);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(studiesStore.mark(body))); return;
     }
 
+    if (url.pathname === '/api/kanban/sync-mem0' && req.method === 'POST') {
+      const meta = await syncFromMem0(kanbanStore, {
+        qdrantUrl: process.env.MEM0_QDRANT_URL || 'http://127.0.0.1:6333',
+        collection: process.env.MEM0_COLLECTION || 'mem0_mcp_selfhosted',
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    }
+    if (url.pathname === '/api/kanban/seed-projects' && req.method === 'POST') {
+      const body = await readJson(req, 65536);
+      const meta = seedProjects(kanbanStore, body.projects || []);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...kanbanStore.get(), plannerAvailable: fs.existsSync(CLAUDE_BIN), meta })); return;
+    }
+
+    if (url.pathname === '/api/kanban/brief' && req.method === 'GET') {
+      const task = kanbanStore.get().tasks.find(t => t.id === url.searchParams.get('id'));
+      if (!task) throw Object.assign(new Error('Tarea no encontrada'), { status: 404 });
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ text: taskBrief(task) })); return;
+    }
+    if (url.pathname === '/api/kanban/plan' && req.method === 'POST') {
+      const body = await readJson(req, 8192);
+      resolveProject(LOCAL_GITHUB_DIR, body.project);
+      const result = await planTasks({ project: body.project, goal: body.goal, tasks: kanbanStore.get().tasks });
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); return;
+    }
+
+    if (req.method === "POST" && url.searchParams.has("repo")) {
+      const root = url.searchParams.get("org") === "personal" ? LOCAL_GITHUB_DIR : url.searchParams.get("org") === "neo" ? NEO_GITHUB_DIR : null;
+      resolveProject(root, url.searchParams.get("repo"));
+    }
+    const aiActions = new Set(["/api/graphify/update", "/api/ideas/generate", "/api/project-status/generate", "/api/project-claude-md/generate", "/api/interview/start", "/api/interview/respond", "/api/interview/finish"]);
+    if (req.method === "POST" && aiActions.has(url.pathname) && !AI_ENABLED) {
+      res.writeHead(403, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Generadores desactivados. Activa DASHBOARD_ENABLE_AI=1 para enviar contexto a tus proveedores de IA." })); return;
+    }
+    if (url.pathname === "/api/repo-audit/push" && process.env.DASHBOARD_ENABLE_GIT_WRITE !== "1") {
+      res.writeHead(403, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Push desactivado. Activa DASHBOARD_ENABLE_GIT_WRITE=1 para habilitarlo." })); return;
+    }
+    if (url.pathname === "/api/repo-audit/delete") {
+      res.writeHead(403, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "El borrado permanente de repositorios está desactivado. Usa tu gestor de archivos." })); return;
+    }
+    if (url.pathname === "/api/radar" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(radarStore.get())); return;
+    }
+    if (url.pathname === "/api/radar/settings" && req.method === "POST") {
+      const body = await readJson(req, 1024);
+      const data = radarStore.configure(body.enabled);
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    }
+    if (url.pathname === "/api/radar/refresh" && req.method === "POST") {
+      const data = await radarStore.refresh();
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    }
+    if (url.pathname === "/api/radar/credits/search" && req.method === "POST") {
+      const data = await radarStore.searchCredits();
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    }
+    if (url.pathname === "/api/radar/cv/pdf" && req.method === "POST") {
+      const value = await extractPdfText(req, resolveBin("pdftotext"));
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text: value })); return;
+    }
+    if (url.pathname === "/api/radar/mark" && req.method === "POST") {
+      const body = await readJson(req, 1024);
+      const data = radarStore.mark(body);
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    }
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      const days = url.searchParams.get("days");
+      if (days && days !== "all" && (!["1", "7", "30"].includes(days))) throw Object.assign(new Error("Rango inválido"), { status: 400 });
+      const data = await providerStore.get(days && days !== "all" ? Number(days) : null);
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    }
+    if (url.pathname === "/api/agents" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      providerStore.setEnabled(body.provider, body.enabled);
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true })); return;
+    }
 
     if (url.pathname === "/api/stats") {
       const days = url.searchParams.get("days");
+      if (days && days !== "all" && !["1", "7", "30"].includes(days)) throw Object.assign(new Error("Rango inválido"), { status: 400 });
       const account = url.searchParams.get("account");
       const payload = await buildPayload({
         days: days && days !== "all" ? Number(days) : null,
@@ -1770,7 +1860,7 @@ const server = http.createServer(async (req, res) => {
         statusLatest?.provider && statusLatest?.generatedAt && { action: "estado", provider: statusLatest.provider, at: statusLatest.generatedAt },
       ].filter(Boolean).sort((a, b) => new Date(b.at) - new Date(a.at));
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ grokCli, claudeCli, lastGeneration: candidates[0] || null }));
+      res.end(JSON.stringify({ grokCli, claudeCli, aiEnabled: AI_ENABLED, lastGeneration: candidates[0] || null }));
       return;
     }
 
@@ -1987,46 +2077,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/repo-audit/delete" && req.method === "POST") {
-      const org = url.searchParams.get("org");
-      const name = url.searchParams.get("repo");
-      const confirm = url.searchParams.get("confirm");
-      const dir = org === "neo" ? NEO_GITHUB_DIR : org === "personal" ? LOCAL_GITHUB_DIR : null;
-      if (!dir || !name) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "org/repo inválidos" }));
-        return;
-      }
-      if (confirm !== name) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "el nombre de confirmación no coincide" }));
-        return;
-      }
-      const repoPath = path.join(dir, name);
-      if (!fs.existsSync(path.join(repoPath, ".git"))) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "repo no encontrado" }));
-        return;
-      }
-      const git = await gitInfo(repoPath);
-      const safe = git.hasRemote && !git.dirty && (git.ahead === null || git.ahead === 0);
-      if (!safe) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "este repo no está completamente respaldado en GitHub — súbelo primero" }));
-        return;
-      }
-      try {
-        fs.rmSync(repoPath, { recursive: true, force: true });
-        repoJobs.delete(`${org}/${name}`);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (e) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
-      }
-      return;
-    }
-
     // Session replay: returns parsed turns for a session ID
     if (url.pathname.startsWith("/api/session/")) {
       const sessionId = decodeURIComponent(url.pathname.slice("/api/session/".length));
@@ -2168,8 +2218,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     const filePath = url.pathname === "/" ? "/index.html" : url.pathname;
-    const fullPath = path.join(__dirname, "public", filePath);
-    if (!fullPath.startsWith(path.join(__dirname, "public"))) {
+    const publicRoot = path.join(__dirname, "public");
+    const fullPath = path.resolve(publicRoot, "." + decodeURIComponent(filePath));
+    if (!fullPath.startsWith(publicRoot + path.sep)) {
       res.writeHead(403);
       res.end("Forbidden");
       return;
@@ -2179,17 +2230,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
     res.end(data);
   } catch (err) {
-    const status = Number(err?.status) || 500;
-    if (status >= 400 && status < 600 && err?.message) {
-      res.writeHead(status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message }));
-      return;
-    }
-    res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end("Not found");
+    res.writeHead(err.status || (err.code === "ENOENT" ? 404 : 500), { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: err.status ? err.message : "No se pudo completar la solicitud" }));
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Claude Dashboard corriendo en http://localhost:${PORT}`);
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`Claude Dashboard corriendo en http://127.0.0.1:${PORT}`);
 });

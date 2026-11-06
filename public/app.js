@@ -4,6 +4,20 @@
 // dense stat-card layout, so cost and compact-count formatting are built manually on top
 // of plain Intl.NumberFormat instead of the "currency"/"compact" presets.
 const LOCALE = "es-PE";
+async function dashboardFetch(url, options = {}) {
+  const headers = new Headers(options.headers);
+  if (options.method === "POST") headers.set("X-Dashboard-Request", "1");
+  const response = await window.fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body.error || `Error ${response.status}. Vuelve a intentarlo.`;
+    const banner = document.getElementById("appError");
+    banner.textContent = message;
+    banner.hidden = false;
+    throw new Error(message);
+  }
+  return response;
+}
 const nf = new Intl.NumberFormat(LOCALE, { useGrouping: "always" });
 const sig3 = new Intl.NumberFormat(LOCALE, { maximumSignificantDigits: 3 });
 const numStd = new Intl.NumberFormat(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -41,25 +55,11 @@ function sessionHeadHtml(s) {
   return { primary, desc, quote };
 }
 
-const MCP_SERVERS = [
-  { name: "Figma", desc: "Lee y escribe diseños en Figma/FigJam: trae componentes a código y manda código a diseño. Útil para UI a partir de mockups.", activation: "context", relevance: "high", note: "Se activa al mencionar Figma o pegar una URL figma.com" },
-  { name: "Notion", desc: "Busca, crea y actualiza páginas, bases de datos y comentarios en tu workspace de Notion.", activation: "context", relevance: "high", note: "Se activa al mencionar Notion o pedir gestionar documentación/tareas ahí" },
-  { name: "Postman", desc: "Crea y gestiona colecciones, specs de API, mocks y entornos de Postman.", activation: "context", relevance: "high", note: "Útil para tu trabajo con microservicios (ej. Ecomovil)" },
-  { name: "Gmail", desc: "Busca hilos, lee correos, crea borradores y administra etiquetas en tu cuenta de Gmail.", activation: "context", relevance: "med", note: "Solo actúa si pides explícitamente revisar o redactar correo" },
-  { name: "Google Drive", desc: "Busca, lee y copia archivos de Drive sin salir de la conversación.", activation: "context", relevance: "med", note: "Útil si tus documentos de proyecto viven en Drive" },
-  { name: "Google Calendar", desc: "Autenticación y consulta de tu calendario de Google.", activation: "context", relevance: "med", note: "Requiere autenticación manual la primera vez" },
-  { name: "Crypto.com", desc: "Datos de mercado cripto en tiempo real: order book, velas, precios de índice.", activation: "auto", relevance: "low", note: "Sin uso evidente en tus proyectos actuales (GLPI, Ecomovil, NEO)" },
-  { name: "Indeed", desc: "Búsqueda de empleos, datos de empresas y currículums.", activation: "auto", relevance: "low", note: "Relevante solo si estás reclutando o buscando trabajo" },
-  { name: "Moody's", desc: "Datos financieros y de riesgo crediticio (requiere autenticación).", activation: "context", relevance: "low", note: "Fuera del alcance de tus proyectos de software actuales" },
-];
-
 const COMMANDS = [
-  { cmd: "code-start", desc: "Levanta el entorno de trabajo con IA: arranca agentmemory (memoria compartida entre agentes) si no está corriendo, y revisa si hay un grafo de graphify disponible.", statusKey: "agentmemoryUp" },
-  { cmd: "code-stop", desc: "Detiene agentmemory y cierra el entorno de trabajo." },
-  { cmd: "claude-personal / claude-empresa", desc: "Cierran sesión y vuelven a loguear Claude Code con la cuenta correspondiente." },
-  { cmd: "claude-quien", desc: "Muestra con qué cuenta de Claude estás logueado ahora mismo (email, org, tipo de plan)." },
-  { cmd: "/graphify", desc: "(Claude Code) Extrae un grafo de conocimiento del proyecto actual. En Codex es $graphify, en Gemini CLI /graphify." },
-  { cmd: "/ponytail-review", desc: "(Claude Code) Revisa el diff actual buscando sobre-ingeniería. En Codex es @ponytail-review." },
+  { cmd: "claude", desc: "Inicia Claude Code dentro del proyecto actual." },
+  { cmd: "codex", desc: "Inicia Codex CLI dentro del proyecto actual. Su autenticación se administra desde Codex." },
+  { cmd: "grok", desc: "Inicia Grok CLI dentro del proyecto actual." },
+  { cmd: "agy", desc: "Inicia Antigravity CLI dentro del proyecto actual." },
 ];
 
 let STATE = null;
@@ -78,9 +78,15 @@ async function fetchStats({ dim = false } = {}) {
   if (appState.range !== "all") params.set("days", appState.range);
   if (appState.account !== "all") params.set("account", appState.account);
   try {
-    const res = await fetch("/api/stats?" + params.toString());
+    const res = await dashboardFetch("/api/stats?" + params.toString());
     STATE = await res.json();
     renderAll();
+    document.getElementById("appError").hidden = true;
+    await loadAgents();
+  } catch (error) {
+    const banner = document.getElementById("appError");
+    banner.textContent = error.message || "No se pudo cargar el uso. Pulsa Actualizar para reintentar.";
+    banner.hidden = false;
   } finally {
     main.classList.remove("is-loading");
   }
@@ -151,9 +157,14 @@ function deltaBadge(current, previous, { polarity = "neutral", mode = "pct" } = 
 }
 
 function renderSummary(totals, previousTotals) {
+  const warning = document.getElementById("pricingWarning");
+  const pricing = STATE.pricing || {};
+  warning.hidden = !STATE.pricingWarnings?.length && !pricing.unknownCacheTTL;
+  warning.textContent = [STATE.pricingWarnings?.length ? `Referencia parcial. Sin precio: ${STATE.pricingWarnings.join(", ")}. Su costo es N/D, no cero.` : "", pricing.unknownCacheTTL ? `${fmt(pricing.unknownCacheTTL)} tokens de caché sin duración; se muestra un intervalo 5m–1h.` : ""].filter(Boolean).join(" ");
+  renderPricingDetail();
   const prev = previousTotals || {};
   const cards = [
-    { label: "Costo estimado", value: fmtCost(totals.costUSD || 0), sub: `Ahorro caché: ${fmtCost(totals.cacheSavingsUSD || 0)} vs pagar input normal`, current: totals.costUSD || 0, previous: prev.costUSD, polarity: "bad-up" },
+    { label: "Equivalente API de Claude", value: claudeReferenceValue(totals), sub: `Precios ${pricing.verifiedAt || "de referencia"}; no factura ni deuda de tu plan`, current: totals.costUSD || 0, previous: prev.costUSD, polarity: "bad-up" },
     { label: "Tokens nuevos", value: fmtCompact(totals.freshTokens), sub: "= input + output + caché creada", current: totals.freshTokens || 0, previous: prev.freshTokens },
     { label: "Sesiones · mensajes", value: `${fmt(totals.sessionCount)} · ${fmt(totals.messageCount)}`, sub: `${fmt(totals.skillCount)} skills instaladas`, current: totals.sessionCount || 0, previous: prev.sessionCount },
     { label: "Tokens totales (con caché)", value: fmtCompact(totals.totalTokens), sub: "tokens nuevos + relecturas de caché", current: totals.totalTokens || 0, previous: prev.totalTokens },
@@ -167,7 +178,6 @@ function renderSummary(totals, previousTotals) {
 
   const floatStat = document.getElementById("heroFloatStat");
   if (floatStat) {
-    document.getElementById("heroFloatValue").textContent = fmtCost(totals.costUSD || 0);
     document.getElementById("heroFloatSub").textContent = `${fmtCompact(totals.freshTokens)} tokens nuevos`;
     floatStat.hidden = false;
   }
@@ -340,8 +350,8 @@ function renderModels(byModel) {
       ([model, m], i) => `
     <div class="model-bar-row">
       <div class="model-bar-top">
-        <span class="model-bar-name">${escapeHtml(model)}</span>
-        <span class="model-bar-val">${fmtCompact(m.fresh)} <span class="cost-tag">${fmtCost(m.costUSD || 0)}</span></span>
+        <span class="model-bar-name">${providerMark('claude')}${escapeHtml(model)}</span>
+        <span class="model-bar-val">${fmtCompact(m.fresh)} <span class="cost-tag">${STATE.pricingWarnings?.includes(model) ? "N/D" : fmtCost(m.costUSD || 0)}</span></span>
       </div>
       <div class="model-bar-track">
         <div class="model-bar-fill" style="width:${(m.fresh / max) * 100}%; background:${palette[i % palette.length]}"></div>
@@ -358,9 +368,9 @@ function renderCosts(totals, byModel, sessions) {
   const monthDays = Number(appState.range) || 90;
   const monthlyRate = (totals.costUSD || 0) * (30 / Math.max(1, monthDays));
   document.getElementById("costCards").innerHTML = [
-    { label: "Costo total del período", value: fmtCost(totals.costUSD || 0), sub: `Ritmo mensual: ${fmtCost(monthlyRate)}` },
-    { label: "Ahorro por caché", value: fmtCost(totals.cacheSavingsUSD || 0), sub: "vs pagar todos los tokens al precio input" },
-    { label: "Costo por sesión (prom.)", value: fmtCost(totals.sessionCount ? (totals.costUSD || 0) / totals.sessionCount : 0), sub: `sobre ${fmt(totals.sessionCount)} sesiones` },
+    { label: "Equivalente API del período", value: claudeReferenceValue(totals), sub: "Precios actuales, no cargos de tu suscripción" },
+    { label: "Ahorro teórico por caché", value: fmtCost(totals.cacheSavingsUSD || 0), sub: "Solo modelos con tarifa; comparación frente a input sin caché" },
+    { label: "Referencia por sesión", value: STATE.pricing?.complete ? fmtCost(totals.sessionCount ? (totals.costUSD || 0) / totals.sessionCount : 0) : "N/D", sub: `sobre ${fmt(totals.sessionCount)} sesiones; no gasto real` },
   ].map((c) => `<div class="stat-card"><div class="stat-num">${c.value}</div><div class="stat-label">${c.label}</div><div class="stat-sub">${c.sub}</div></div>`).join("");
 
   // Model cost bars
@@ -559,7 +569,7 @@ async function loadIdeas() {
   const prevStatus = IDEAS_DATA?.job?.status;
   const prevCount = IDEAS_DATA?.entries?.length;
   try {
-    const res = await fetch("/api/ideas");
+    const res = await dashboardFetch("/api/ideas");
     IDEAS_DATA = await res.json();
   } catch {
     IDEAS_DATA = { job: { status: "idle" }, entries: [] };
@@ -640,7 +650,7 @@ function renderIdeas() {
             ${idea.next_step ? `<div class="idea-next"><span class="idea-next-label">Próximo paso</span>${escapeHtml(idea.next_step)}</div>` : ""}
           </div>`).join("")}
       </div>
-      <div class="ideas-sources">fuentes: ${fmt(s.localRepos || 0)} repos locales · ${fmt(s.neoRepos || 0)} repos NEO · ${fmt(s.remoteRepos || 0)} repos remotos · ${fmt(s.activeProjects || 0)} proyectos activos · ${fmt(s.notes || 0)} notas del vault</div>
+      <div class="ideas-sources">fuentes: ${fmt(s.localRepos || 0)} repos locales · ${fmt(s.neoRepos || 0)} repos de trabajo · ${fmt(s.remoteRepos || 0)} repos remotos · ${fmt(s.activeProjects || 0)} proyectos activos · ${fmt(s.notes || 0)} notas del vault</div>
     </div>`;
   };
 
@@ -665,7 +675,7 @@ function renderIdeas() {
 
 async function triggerIdeasGeneration(customIdea) {
   const qs = customIdea ? `?idea=${encodeURIComponent(customIdea)}` : "";
-  const res = await fetch(`/api/ideas/generate${qs}`, { method: "POST" });
+  const res = await dashboardFetch(`/api/ideas/generate${qs}`, { method: "POST" });
   if (res.status === 409) { await loadIdeas(); return; }
   await loadIdeas();
   if (ideasPollTimer) return;
@@ -692,7 +702,7 @@ const INTERVIEW_VERDICT_CLASS = { "aprobado": "good", "aprobado con reservas": "
 
 async function loadInterviewSessions() {
   try {
-    const res = await fetch("/api/interview/sessions");
+    const res = await dashboardFetch("/api/interview/sessions");
     const data = await res.json();
     INTERVIEW_SESSIONS = data.sessions || [];
   } catch {
@@ -737,7 +747,7 @@ function renderInterviewHistory() {
 async function loadCurrentInterview() {
   if (!currentInterviewId) { CURRENT_INTERVIEW = null; renderInterviewChat(); return; }
   try {
-    const res = await fetch(`/api/interview/session?id=${encodeURIComponent(currentInterviewId)}`);
+    const res = await dashboardFetch(`/api/interview/session?id=${encodeURIComponent(currentInterviewId)}`);
     if (!res.ok) {
       currentInterviewId = null;
       localStorage.removeItem("claude-dashboard-interview-id");
@@ -886,7 +896,7 @@ function setupInterviewWidget() {
 }
 
 async function startNewInterview() {
-  const res = await fetch("/api/interview/start", {
+  const res = await dashboardFetch("/api/interview/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ focus: interviewFocus }),
@@ -901,7 +911,7 @@ async function startNewInterview() {
 async function cancelInterview() {
   if (!currentInterviewId) return;
   try {
-    await fetch(`/api/interview/cancel?id=${encodeURIComponent(currentInterviewId)}`, { method: "POST" });
+    await dashboardFetch(`/api/interview/cancel?id=${encodeURIComponent(currentInterviewId)}`, { method: "POST" });
   } catch {}
   if (interviewPollTimer) { clearInterval(interviewPollTimer); interviewPollTimer = null; }
   await loadCurrentInterview();
@@ -912,7 +922,7 @@ async function sendInterviewAnswer() {
   const answer = input.value.trim();
   if (!answer || !currentInterviewId) return;
   input.value = "";
-  const res = await fetch(`/api/interview/respond?id=${encodeURIComponent(currentInterviewId)}`, {
+  const res = await dashboardFetch(`/api/interview/respond?id=${encodeURIComponent(currentInterviewId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ answer }),
@@ -977,20 +987,8 @@ function renderSkills(skills) {
 }
 
 function renderMcp() {
-  document.getElementById("mcpWrap").innerHTML = MCP_SERVERS.map((m) => {
-    const activationLabel = m.activation === "auto" ? "Automático" : "Según contexto";
-    const relevanceLabel = m.relevance === "high" ? "Alta relevancia" : m.relevance === "med" ? "Relevancia media" : "Baja relevancia";
-    return `
-    <div class="mcp-chip">
-      <div class="mcp-head">
-        <span class="mcp-name">${escapeHtml(m.name)}</span>
-        <span class="mcp-activation ${m.activation}">${activationLabel}</span>
-      </div>
-      <div class="mcp-desc">${escapeHtml(m.desc)}</div>
-      <div class="mcp-relevance ${m.relevance === "low" ? "low" : "high"}">${relevanceLabel}</div>
-      <div class="skill-desc" style="margin-top:0.3rem">${escapeHtml(m.note)}</div>
-    </div>`;
-  }).join("");
+  const servers = STATE.mcpServers || [];
+  document.getElementById("mcpWrap").innerHTML = servers.length ? servers.map((m) => `<div class="mcp-chip"><strong>${escapeHtml(m.name)}</strong><p class="skill-desc">Transporte: ${escapeHtml(m.transport)} · configurado en ${escapeHtml(m.profile)}</p><p class="skill-desc">Configuración detectada. Conexión no verificada.</p></div>`).join("") : '<p class="skill-empty">No hay servidores MCP detectados en las configuraciones locales de Claude.</p>';
 }
 
 // Replaces the previous D3 force-directed account→project graph: a
@@ -1073,7 +1071,7 @@ function renderGraphifyCard(tools) {
       }).join("")}
     </div>
     <div class="graphify-hint" style="margin-top:0.9rem">
-      "Actualizar ahora" corre <code>graphify extract --backend openai</code> — usa tu API key de OpenAI cada vez.
+      "Actualizar ahora" usa <code>graphify update</code> si el grafo existe. Una extracción inicial usa Ollama y requiere un entorno configurado. Activa los generadores para ejecutarla.
     </div>`;
 
   el.querySelectorAll(".graphify-update-btn:not([disabled])").forEach((btn) => {
@@ -1083,7 +1081,7 @@ function renderGraphifyCard(tools) {
 
 let graphifyPollTimer = null;
 async function triggerGraphifyUpdate(targetKey) {
-  await fetch(`/api/graphify/update?target=${targetKey}`, { method: "POST" });
+  await dashboardFetch(`/api/graphify/update?target=${targetKey}`, { method: "POST" });
   await fetchStats();
   if (graphifyPollTimer) return;
   graphifyPollTimer = setInterval(async () => {
@@ -1113,7 +1111,7 @@ function renderCommands(tools) {
 async function loadHistory() {
   if (HISTORY_DATA) { renderHistory(); return; }
   try {
-    const res = await fetch("/api/history");
+    const res = await dashboardFetch("/api/history");
     HISTORY_DATA = await res.json();
   } catch {
     HISTORY_DATA = [];
@@ -1158,7 +1156,7 @@ function renderHistory() {
 async function loadWorkspace() {
   if (WORKSPACE_DATA) { renderWorkspace(); return; }
   try {
-    const res = await fetch("/api/workspace");
+    const res = await dashboardFetch("/api/workspace");
     WORKSPACE_DATA = await res.json();
   } catch {
     WORKSPACE_DATA = {};
@@ -1223,7 +1221,7 @@ async function openReplay(sessionId, title) {
   replayExpanded = new Set();
 
   try {
-    const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}`);
+    const res = await dashboardFetch(`/api/session/${encodeURIComponent(sessionId)}`);
     if (!res.ok) throw new Error("not found");
     replayTurns = await res.json();
     renderReplay();
@@ -1438,7 +1436,7 @@ const claudeMdPending = new Set(); // keys ("org/name") currently being generate
 
 async function fetchProjects() {
   try {
-    const res = await fetch("/api/projects");
+    const res = await dashboardFetch("/api/projects");
     PROJECTS_DATA = await res.json();
     renderGithubProjects(PROJECTS_DATA);
   } catch {}
@@ -1452,7 +1450,7 @@ async function loadProjectStatus() {
   const prevStatus = PROJECT_STATUS_DATA?.job?.status;
   const prevGeneratedAt = PROJECT_STATUS_DATA?.generatedAt;
   try {
-    const res = await fetch("/api/project-status");
+    const res = await dashboardFetch("/api/project-status");
     PROJECT_STATUS_DATA = await res.json();
   } catch {
     PROJECT_STATUS_DATA = { job: { status: "idle" }, generatedAt: null, entries: [] };
@@ -1463,7 +1461,7 @@ async function loadProjectStatus() {
 }
 
 async function triggerProjectStatusGeneration() {
-  const res = await fetch("/api/project-status/generate", { method: "POST" });
+  const res = await dashboardFetch("/api/project-status/generate", { method: "POST" });
   if (res.status === 409) { await loadProjectStatus(); return; }
   await loadProjectStatus();
   if (projectStatusPollTimer) return;
@@ -1497,11 +1495,11 @@ function triggerClaudeMdGeneration(org, name, btn) {
   claudeMdPending.add(key);
   btn.disabled = true;
   btn.textContent = "Generando…";
-  fetch(`/api/project-claude-md/generate?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(name)}`, { method: "POST" });
+  dashboardFetch(`/api/project-claude-md/generate?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(name)}`, { method: "POST" });
   if (claudeMdPollTimer) return;
   claudeMdPollTimer = setInterval(async () => {
     let jobs = {};
-    try { jobs = await (await fetch("/api/project-claude-md/jobs")).json(); } catch {}
+    try { jobs = await (await dashboardFetch("/api/project-claude-md/jobs")).json(); } catch {}
     let anyPending = false;
     for (const key of [...claudeMdPending]) {
       const job = jobs[key];
@@ -1574,7 +1572,7 @@ function renderGithubProjects(projects) {
       btn.disabled = true;
       btn.textContent = "Creando…";
       try {
-        await fetch(`/api/project-notes/create?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(name)}`, { method: "POST" });
+        await dashboardFetch(`/api/project-notes/create?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(name)}`, { method: "POST" });
         await fetchProjects();
       } catch { btn.disabled = false; btn.textContent = "+ Nota privada"; }
     });
@@ -1593,9 +1591,10 @@ function openProjectModal(name, org) {
   if (!project?.content) return;
   document.getElementById("projectModalTitle").textContent = name;
   const body = document.getElementById("projectModalBody");
-  body.innerHTML = typeof marked !== "undefined"
-    ? marked.parse(project.content)
-    : `<pre style="white-space:pre-wrap;font-size:0.82rem">${escapeHtml(project.content)}</pre>`;
+  const pre = document.createElement("pre");
+  pre.className = "project-document";
+  pre.textContent = project.content;
+  body.replaceChildren(pre);
   document.getElementById("projectModal").hidden = false;
   document.body.style.overflow = "hidden";
 }
@@ -1612,7 +1611,7 @@ let auditPollTimer = null;
 
 async function loadAudit() {
   try {
-    const res = await fetch("/api/repo-audit");
+    const res = await dashboardFetch("/api/repo-audit");
     AUDIT_DATA = await res.json();
   } catch {
     AUDIT_DATA = { entries: [], jobs: {} };
@@ -1666,14 +1665,14 @@ function renderAudit() {
 
     html += `<tr data-repo="${escapeHtml(r.name)}" data-org="${escapeHtml(r.org)}">
       <td class="audit-name">${escapeHtml(r.name)}</td>
-      <td>${r.org === "neo" ? "NEO" : "personal"}</td>
+      <td>${r.org === "neo" ? "trabajo" : "personal"}</td>
       <td class="mono">${fmtBytes(r.sizeBytes)}</td>
       <td class="mono">${fmtDaysAgo(r.daysSinceCommit)}</td>
       <td>${escapeHtml(statusText)}</td>
       <td><span class="audit-rec ${rec.cls}">${escapeHtml(rec.label)}</span></td>
       <td class="audit-actions">
         <button class="ghost-btn audit-push-btn" ${pushRunning ? "disabled" : ""}>${pushRunning ? "Subiendo…" : r.dirty ? "Commit + push" : r.hasRemote ? "Push" : "Subir a GitHub"}</button>
-        <button class="ghost-btn audit-delete-btn" ${r.pushed ? "" : "disabled"} title="${r.pushed ? "Borra el repo local" : "Solo disponible si ya está 100% respaldado en GitHub"}">Borrar local</button>
+        <span class="audit-readonly">Borrado desactivado</span>
       </td>
     </tr>`;
     if (job?.status === "error") {
@@ -1698,7 +1697,7 @@ function renderAudit() {
 }
 
 async function triggerRepoPush(org, repo) {
-  await fetch(`/api/repo-audit/push?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}`, { method: "POST" });
+  await dashboardFetch(`/api/repo-audit/push?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}`, { method: "POST" });
   await loadAudit();
   if (auditPollTimer) return;
   auditPollTimer = setInterval(async () => {
@@ -1711,7 +1710,7 @@ async function triggerRepoPush(org, repo) {
 function promptRepoDelete(org, repo) {
   const typed = window.prompt(`Esto borra "${repo}" de tu disco de forma permanente (ya verificamos que está 100% respaldado en GitHub). Escribe "${repo}" para confirmar:`);
   if (typed !== repo) return;
-  fetch(`/api/repo-audit/delete?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}&confirm=${encodeURIComponent(typed)}`, { method: "POST" })
+  dashboardFetch(`/api/repo-audit/delete?org=${encodeURIComponent(org)}&repo=${encodeURIComponent(repo)}&confirm=${encodeURIComponent(typed)}`, { method: "POST" })
     .then((res) => res.json())
     .then((result) => {
       if (!result.ok) { window.alert("No se pudo borrar: " + result.error); return; }
@@ -1728,15 +1727,31 @@ function promptRepoDelete(org, repo) {
 // carry their tier via [data-tier]; nothing about their own render logic
 // changes, only which ones are visible.
 const TIER_STORAGE_KEY = "claude-dashboard-tier";
-const TIERS = ["kanban", "daily", "weekly", "monthly", "yearly"];
+const TIERS = ["kanban", "daily", "agents", "jobs", "studies", "radar", "weekly", "monthly", "yearly"];
 
 function setupTierTabs() {
   const tabs = [...document.querySelectorAll("#tierTabs .tier-tab")];
   if (!tabs.length) return;
+  // Navigate before the connection inventory, especially when opening Radar.
+  document.getElementById("appError").before(document.getElementById("tierTabs"));
   tabs.forEach((btn) => btn.addEventListener("click", () => applyTier(btn.dataset.tier)));
+  tabs.forEach((btn, index) => btn.addEventListener("keydown", (event) => {
+    let next;
+    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = tabs.length - 1;
+    if (next == null) return;
+    event.preventDefault();
+    tabs[next].focus();
+    applyTier(tabs[next].dataset.tier, { skipScroll: true });
+  }));
 
   let initial = null;
   try { initial = localStorage.getItem(TIER_STORAGE_KEY); } catch {}
+  // A #tier link (e.g. /#jobs) wins over the remembered tab.
+  const fromHash = location.hash.slice(1);
+  if (TIERS.includes(fromHash)) initial = fromHash;
   applyTier(TIERS.includes(initial) ? initial : "daily", { skipScroll: true });
 }
 
@@ -1754,19 +1769,19 @@ function applyTier(tier, { skipScroll = false } = {}) {
   document.querySelectorAll("main > [data-tier]").forEach((sec) => {
     sec.style.display = sec.dataset.tier === tier ? "" : "none";
   });
-  const toolbar = document.querySelector(".toolbar");
-  const hero = document.querySelector(".hero-row");
-  if (toolbar) toolbar.hidden = tier === "kanban";
-  if (hero) hero.hidden = tier === "kanban";
-  document.body.dataset.section = tier;
-  document.dispatchEvent(new CustomEvent("dashboard:tier", { detail: tier }));
   document.querySelectorAll("#tierTabs .tier-tab").forEach((btn) => {
     const active = btn.dataset.tier === tier;
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", String(active));
+    btn.tabIndex = active ? 0 : -1;
   });
 
   appState.tier = tier;
+  document.body.dataset.section = tier;
+  document.querySelector(".agents-section").hidden = !["daily", "agents"].includes(tier);
+  document.querySelector(".toolbar").hidden = ["radar", "kanban", "jobs", "studies"].includes(tier);
+  document.querySelector(".hero-row").hidden = ["radar", "kanban", "jobs", "studies"].includes(tier);
+  document.dispatchEvent(new CustomEvent("dashboard:tier", { detail: tier }));
   try { localStorage.setItem(TIER_STORAGE_KEY, tier); } catch {}
 
   revealTier(tier);
@@ -1782,17 +1797,11 @@ function applyTier(tier, { skipScroll = false } = {}) {
 // position for ScrollTrigger to key off — a plain fade-in on the newly shown
 // sections replaces the old scroll-triggered reveal.
 function revealTier(tier) {
-  if (typeof gsap === "undefined") return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const targets = [...document.querySelectorAll(`main > [data-tier="${tier}"]`)].filter((el) => !el.hidden);
-  if (!targets.length) return;
-  gsap.fromTo(targets, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out", stagger: 0.05, overwrite: true });
+  // Tabs switch synchronously, without decorative or layout animation.
 }
 
 function revealHero() {
-  if (typeof gsap === "undefined") return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  gsap.fromTo(".hero-row", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" });
+  // Product UI loads directly into the task, without entrance choreography.
 }
 
 const PROVIDER_ACTION_LABEL = { ideas: "ideas", estado: "estado" };
@@ -1801,13 +1810,13 @@ async function loadProviders() {
   const el = document.getElementById("providerStatus");
   if (!el) return;
   try {
-    const res = await fetch("/api/providers");
+    const res = await dashboardFetch("/api/providers");
     const data = await res.json();
     const grokPart = `Grok CLI: ${data.grokCli ? "ok" : "no encontrado"}`;
     const lastPart = data.lastGeneration?.provider
       ? ` · Última generación: ${data.lastGeneration.provider} · ${PROVIDER_ACTION_LABEL[data.lastGeneration.action] || data.lastGeneration.action}`
       : "";
-    el.textContent = `${grokPart}${lastPart}`;
+    el.textContent = `${data.aiEnabled ? 'Generación IA activa' : 'Generación IA desactivada'} · ${grokPart}${lastPart}`;
   } catch {
     el.textContent = "";
   }
@@ -1815,12 +1824,120 @@ async function loadProviders() {
 
 async function boot() {
   setupToolbar();
-  await fetchStats();
+  setupAgentDetailTabs();
   setupTierTabs();
+  document.getElementById("refreshAgents").addEventListener("click", () => fetchStats({ dim: true }));
+  await fetchStats();
   revealHero();
   setupAutoRefresh(30000);
   fetchProjects();
   setInterval(fetchProjects, 60000); // refresca proyectos cada 60s automáticamente
   loadProviders();
+}
+let agentsBusy = false;
+let agentsData = null;
+let agentDetailId = "codex";
+function providerMark(id) {
+  const assets = { claude: 'claude.png', codex: 'codex.png', grok: 'grok.svg', agy: 'agy.png' };
+  if (!assets[id]) return '<span class="provider-logo" aria-hidden="true">DG</span>';
+  const image = `<img src="/logos/${assets[id]}" alt="" width="24" height="24" />`;
+  return `<span class="provider-logo provider-${id}" aria-hidden="true">${id === 'codex' ? `<img class="codex-dark-logo" src="/logos/codex-dark.png" alt="" width="24" height="24" /><span class="codex-light-logo">${image}</span>` : image}</span>`;
+}
+
+function claudeReferenceValue(totals) {
+  const p = STATE.pricing || {};
+  if (p.totalTokens && !p.knownTokens) return "N/D";
+  const prefix = p.unknownModels?.length ? "≥ " : "";
+  const value = totals.costUSD || 0;
+  return prefix + (p.unknownCacheMaxDeltaUSD > 0 ? `${fmtCost(value)}–${fmtCost(value + p.unknownCacheMaxDeltaUSD)}` : fmtCost(value));
+}
+function renderPricingDetail() {
+  const p = STATE.pricing || {};
+  const rows = Object.entries(STATE.byModel || {}).sort(([, a], [, b]) => (b.costUSD || 0) - (a.costUSD || 0));
+  document.getElementById("pricingDetail").innerHTML = `<p class="agents-note">Cobertura de tarifas: ${p.tokenPercent == null ? "sin tokens" : `${p.tokenPercent.toFixed(2)}% de tokens`}. Verificado ${escapeHtml(p.verifiedAt || "sin fecha")}. Precios actuales aplicados a los registros del rango, no facturación histórica. Si falta duración de caché, el valor es un intervalo. <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener noreferrer">Fuente oficial de precios</a>.</p><div class="agent-table-scroll"><table class="agent-table"><caption class="sr-only">Desglose de referencia API por modelo Claude</caption><thead><tr><th>Modelo</th><th>Input</th><th>Output</th><th>Caché 5m</th><th>Caché 1h</th><th>TTL sin dato</th><th>Lectura caché</th><th>Base API, USD</th></tr></thead><tbody>${rows.map(([model, m]) => `<tr><th scope="row">${escapeHtml(model)}</th><td>${fmtCompact(m.input)}</td><td>${fmtCompact(m.output)}</td><td>${fmtCompact(Math.max(0, m.cacheCreate - (m.cache1h || 0) - (m.cacheUnknown || 0)))}</td><td>${fmtCompact(m.cache1h)}</td><td>${fmtCompact(m.cacheUnknown)}</td><td>${fmtCompact(m.cacheRead)}</td><td>${p.unknownModels?.includes(model) ? "N/D" : `${m.cacheUnknown ? "≥ " : ""}${fmtCost(m.costUSD)}`}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function setupAgentDetailTabs() {
+  const tabs = [...document.querySelectorAll("[data-detail]")];
+  const select = (id) => {
+    agentDetailId = id;
+    tabs.forEach((tab) => { const selected = tab.dataset.detail === id; tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1; tab.classList.toggle("active", selected); });
+    document.getElementById("agentDetail").setAttribute("aria-labelledby", `detail-${id}`);
+    renderAgentDetail();
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => select(tab.dataset.detail));
+    tab.addEventListener("keydown", (event) => {
+      const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+      if (next == null) return;
+      event.preventDefault(); select(tabs[next].dataset.detail); tabs[next].focus();
+    });
+  });
+  select(agentDetailId);
+}
+function renderAgentDetail() {
+  const el = document.getElementById("agentDetail");
+  const p = agentsData?.providers.find((p) => p.id === agentDetailId);
+  if (!p) return;
+  if (!p.enabled || !p.available) { el.innerHTML = `<p class="skill-empty">${!p.enabled ? `Agrega ${escapeHtml(p.name)} en Tus agentes para consultar sus registros.` : "No se encontraron registros en la fuente configurada."}</p>`; return; }
+  const monetary = (value) => value == null ? "N/D" : fmtCost(value);
+  const smallProject = (value) => value ? value.split(/[\\/]/).filter(Boolean).pop() : "Sin proyecto registrado";
+  const dateTime = (value) => value ? new Date(value).toLocaleString(LOCALE) : "N/D";
+  const table = (headers, rows, caption) => `<div class="agent-table-scroll"><table class="agent-table"><caption class="sr-only">${caption}</caption><thead><tr>${headers.map((h) => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const metrics = [
+    ["Sesiones", fmt(p.sessionCount)], ["Tokens registrados", p.tokens ? fmtCompact(p.tokens.total) : "N/D"],
+    ["Input sin caché", p.tokens ? fmtCompact(p.tokens.input) : "N/D"], ["Output", p.tokens ? fmtCompact(p.tokens.output) : "N/D"], ["Lectura de caché", p.tokens ? fmtCompact(p.tokens.cacheRead) : "N/D"],
+    [p.id === "grok" ? `Costo registrado · ${p.costSessions}/${p.sessionCount} sesiones` : "Costo registrado del plan", monetary(p.costUSD)],
+  ];
+  if (p.id === "codex") metrics.push(["Equivalente base API", `${p.referenceUSD != null && p.unpricedTokens ? "≥ " : ""}${monetary(p.referenceUSD)}`]);
+  if (p.activityAvailable) metrics.push(["Mensajes registrados", fmt(p.messages)], ["Herramientas registradas", fmt(p.tools)]);
+  let quota = "";
+  if (p.id === "codex") {
+    const q = p.quota;
+    quota = `<div class="agent-quota"><h3>Cuotas observadas de Codex</h3>${q ? `<p class="agents-note">Último estado: ${escapeHtml(dateTime(q.observedAt))} · plan ${escapeHtml(q.plan || "sin dato")} · sesión en ${escapeHtml(smallProject(q.project))}. No se verifica la cuenta ni se mezclan planes. No es una lectura en vivo; consulta <code>/status</code> para el estado actual.</p><div class="quota-windows">${[q.primary, q.secondary].filter(Boolean).map((w) => `<div><label>${w.windowMinutes ? w.windowMinutes === 10080 ? "Ventana semanal" : `Ventana de ${fmt(w.windowMinutes / 60)} horas` : "Ventana registrada"}: ${w.usedPercent}% usado <progress value="${w.usedPercent}" max="100">${w.usedPercent}%</progress></label><p>Reset registrado: ${escapeHtml(dateTime(w.resetsAt))}${w.resetsAt && new Date(w.resetsAt).valueOf() < Date.now() ? " (ya pasó; estado antiguo)" : ""}</p></div>`).join("")}</div>` : '<p class="agents-note">No hay snapshots de cuotas. Consulta <code>/status</code> en Codex.</p>'}</div>`;
+  }
+  const modelRows = p.byModel.map((m) => `<tr><th scope="row">${escapeHtml(m.model)}</th><td>${m.tokens ? fmtCompact(m.tokens.input) : "N/D"}</td><td>${m.tokens ? fmtCompact(m.tokens.output) : "N/D"}</td><td>${m.tokens ? fmtCompact(m.tokens.cacheRead) : "N/D"}</td><td>${m.tokens ? fmtCompact(m.tokens.total) : "N/D"}</td><td>${monetary(p.id === "codex" ? m.referenceUSD : m.costUSD)}</td></tr>`);
+  const dayRows = p.byDay.slice(-31);
+  const activityValue = (d) => p.tokens ? d.tokens?.total || 0 : d.messages + d.tools;
+  const maximum = Math.max(1, ...dayRows.map(activityValue));
+  const days = dayRows.length ? `<div class="agent-day-chart" aria-label="${p.tokens ? "Tokens" : "Actividad"} por día UTC">${dayRows.map((d) => `<div class="agent-day"><span>${escapeHtml(d.day)}</span><div class="agent-day-track"><span style="width:${100 * activityValue(d) / maximum}%"></span></div><strong>${fmtCompact(activityValue(d))}</strong></div>`).join("")}</div>` : '<p class="skill-empty">Sin actividad fechada en este rango.</p>';
+  const projects = table(["Proyecto", "Sesiones", "Tokens", "Mensajes", "Herramientas"], p.byProject.slice(0, 15).map((r) => `<tr><th scope="row" title="${escapeHtml(r.project)}">${escapeHtml(smallProject(r.project))}</th><td>${fmt(r.sessionCount)}</td><td>${r.tokens ? fmtCompact(r.tokens.total) : "N/D"}</td><td>${p.activityAvailable ? fmt(r.messages) : "N/D"}</td><td>${p.activityAvailable ? fmt(r.tools) : "N/D"}</td></tr>`), "Uso por proyecto, hasta 15 proyectos");
+  const sessions = table(["Proyecto / sesión", "Última actividad", "Modelos observados", "Tokens de sesión", p.id === "codex" ? "Base API, USD" : "Costo registrado, USD"], p.sessions.map((s) => `<tr><td>${escapeHtml(smallProject(s.project) === "Sin proyecto registrado" ? s.id.split(":").slice(1).join(":").slice(0, 8) : smallProject(s.project))}</td><td>${escapeHtml(dateTime(s.lastAt))}</td><td>${escapeHtml(s.models?.length ? s.models.join(", ") : s.model)}</td><td>${s.tokens ? fmtCompact(s.tokens.total) : "N/D"}</td><td>${monetary(p.id === "codex" ? s.referenceUSD : s.costUSD)}</td></tr>`), "Sesiones recientes, valores de toda su duración");
+  el.innerHTML = `<dl class="agent-detail-metrics">${metrics.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl><p class="agents-note">Cobertura de tokens: ${p.measuredSessions}/${p.sessionCount} sesiones. ${p.id === "codex" ? `${escapeHtml(p.reference.note)} ${p.unpricedTokens ? `${fmt(p.unpricedTokens)} tokens sin precio.` : ""} <a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">Tarifas oficiales</a>.` : p.id === "grok" ? 'Costo reportado en registros, con cobertura parcial, no factura del plan. <a href="https://docs.x.ai/developers/cost-tracking" target="_blank" rel="noopener noreferrer">1 USD = 10¹⁰ ticks</a>.' : "Fuente: Antigravity CLI, no Antigravity IDE. Tokens, costos, cuotas y proyecto N/D cuando el registro no los incluye."}</p>${quota}<details class="agent-breakdown" open><summary>Por modelo</summary>${modelRows.length ? table(["Modelo", "Input", "Output", "Caché", "Total", p.id === "codex" ? "Base API, USD" : "Registrado, USD"], modelRows, "Uso por modelo del turno") : '<p class="agents-note">El registro no contiene modelo y tokens verificables.</p>'}${p.observedModels.length ? `<p class="agents-note">Modelos observados en sesiones del rango: ${p.observedModels.map(escapeHtml).join(", ")}.</p>` : ""}</details><details class="agent-breakdown" open><summary>${p.tokens ? "Tokens" : "Mensajes + herramientas"} por día UTC, últimos 31 días con datos</summary>${days}</details><details class="agent-breakdown"><summary>Por proyecto, hasta 15</summary>${projects}</details><details class="agent-breakdown"><summary>Sesiones recientes, hasta 24</summary><p class="agents-note">Tokens y valores monetarios de toda la sesión, no solo del rango seleccionado.</p>${sessions}</details>`;
+}
+async function loadAgents() {
+  if (agentsBusy) return;
+  agentsBusy = true;
+  try {
+    const response = await dashboardFetch(`/api/agents?days=${appState.range}`);
+    const data = await response.json();
+    agentsData = data;
+    renderAgentDetail();
+    const claude = { id: "claude", name: "Claude Code", command: "claude", enabled: true, available: true, sessionCount: STATE?.totals.sessionCount || 0, tokens: STATE ? { total: STATE.totals.totalTokens, cacheRead: STATE.totals.cacheReadTokens } : null, detail: "Perfiles locales. Detalle completo en Uso de Claude.", source: "~/.claude · ~/.claude-work · ~/.claude-personal" };
+    document.getElementById("agentsWrap").innerHTML = [claude, ...data.providers].map((p) => `
+      <div class="agent-row">
+        <div class="agent-identity">${providerMark(p.id)}<div><strong>${escapeHtml(p.name)}</strong><span class="agent-state${p.enabled ? " connected" : ""}">${p.enabled ? p.available ? "Conectado" : "Sin registros" : p.available ? "Disponible" : "Sin detectar"}</span></div></div>
+        <div class="agent-description"><span>${escapeHtml(p.detail)}</span><details><summary>Fuente local</summary><code>${escapeHtml(p.source)}</code></details></div>
+        <div class="agent-metric"><strong>${p.enabled ? fmt(p.sessionCount) : "·"}</strong><span>sesiones</span></div>
+        <div class="agent-metric"><strong title="${p.tokens ? fmt(p.tokens.total) : "No registrado"}">${p.enabled && p.tokens ? fmtCompact(p.tokens.total) : "N/D"}</strong><span>${p.enabled && p.measuredSessions != null ? `tokens · ${fmt(p.measuredSessions)}/${fmt(p.sessionCount)} sesiones` : "tokens registrados"}</span></div>
+        <div class="agent-actions">${p.id !== "claude" ? `<button class="${p.enabled ? "ghost-btn" : "agent-connect"}" data-agent="${p.id}" data-enabled="${!p.enabled}">${p.enabled ? "Desconectar" : `+ Agregar ${escapeHtml(p.name)}`}</button>` : '<span class="agent-baseline">Fuente principal</span>'}<button class="agent-command" data-command="${escapeHtml(p.command)}" aria-label="Copiar comando para iniciar ${escapeHtml(p.name)}">Copiar comando</button></div>
+      </div>`).join("");
+    document.querySelectorAll("[data-agent]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await dashboardFetch("/api/agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: button.dataset.agent, enabled: button.dataset.enabled === "true" }) });
+        await loadAgents();
+        document.getElementById("agentsFeedback").textContent = "Conexión actualizada. La preferencia se guarda en este equipo.";
+      } catch (error) { document.getElementById("agentsFeedback").textContent = error.message; }
+      finally { button.disabled = false; }
+    }));
+    document.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(button.dataset.command); document.getElementById("agentsFeedback").textContent = `Comando copiado: ${button.dataset.command}. Ejecútalo dentro de tu proyecto.`; }
+      catch { document.getElementById("agentsFeedback").textContent = `Comando: ${button.dataset.command}`; }
+    }));
+    const sessions = data.providers.flatMap((p) => p.sessions.map((s) => ({ ...s, name: p.name }))).sort((a, b) => (b.lastAt || "").localeCompare(a.lastAt || "")).slice(0, 16);
+    document.getElementById("agentSessions").innerHTML = sessions.length ? `<p class="agents-note">Tokens por sesión: toda su duración. El rango filtra las sesiones con actividad reciente.</p><div class="agent-table-scroll"><table class="agent-table"><thead><tr><th>Agente</th><th>Proyecto / sesión</th><th>Última actividad</th><th>Modelo</th><th>Tokens de sesión</th></tr></thead><tbody>${sessions.map((s) => `<tr><td>${escapeHtml(s.name)}</td><td title="${escapeHtml(s.project || s.id)}">${escapeHtml(s.project ? s.project.split(/[\\/]/).filter(Boolean).pop() : s.id.split(":")[1].slice(0, 8))}</td><td>${s.lastAt ? escapeHtml(new Date(s.lastAt).toLocaleDateString(LOCALE)) : "N/D"}</td><td>${escapeHtml(s.model)}</td><td class="mono">${s.tokens ? fmtCompact(s.tokens.total) : "N/D"}</td></tr>`).join("")}</tbody></table></div>` : '<p class="skill-empty">Agrega un agente para consultar sus sesiones. No necesitas una API key.</p>';
+  } catch (error) {
+    document.getElementById("agentsFeedback").textContent = `No se pudieron cargar los agentes: ${error.message}`;
+  } finally { agentsBusy = false; }
 }
 boot();

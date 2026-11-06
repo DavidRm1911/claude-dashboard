@@ -1,15 +1,13 @@
 {
   "name": "claude-dashboard",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
-  "description": "Dashboard local de uso de Claude Code: tokens, actividad y skills, combinando los perfiles .claude, .claude-work y .claude-personal.",
+  "description": "Dashboard local de Claude Code, Codex, Grok y Antigravity CLI: uso registrado, sesiones, proyectos y entorno.",
+  "engines": { "node": ">=22" },
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test test/*.test.js"
-  },
-  "engines": {
-    "node": ">=22"
   }
 }
