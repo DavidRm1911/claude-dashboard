@@ -126,7 +126,9 @@
             ${j.locationVerdict === "FLAG" ? '<span class="radar-badge warning">Verificar ubicación</span>' : ""}
             ${j.locationVerdict === "FAIL" ? '<span class="radar-badge warning">Ubicación no elegible</span>' : ""}
             ${j.decision === "postular" ? '<span class="radar-badge positive">Para postular</span>' : ""}
-            ${j.applied ? '<span class="radar-badge positive">En tracker</span>' : ""}
+            ${j.trackerStatus === "applied" || j.applied ? '<span class="radar-badge positive">Enviada</span>'
+              : j.trackerStatus === "drafted" ? '<span class="radar-badge positive">Borrador en tracker</span>'
+              : j.trackerStatus ? '<span class="radar-badge positive">En tracker</span>' : ""}
             ${j.deadline ? `<span class="radar-meta">Cierra ${esc(j.deadline)}</span>` : ""}</div>
           <h4>${link(j.url, j.title)}</h4>
           <div class="radar-meta">${esc(j.company)} · ${esc(j.location || "Ubicación no indicada")} · ${esc(j.portal || "")}${j.posted ? ` · ${esc(j.posted)}` : ""}</div>
@@ -136,6 +138,9 @@
           ${runs[j.ref] && !["cancelled"].includes(runs[j.ref].stage)
             ? `<button class="radar-button primary" data-open="${j.ref}">${esc(STAGE_LABEL[runs[j.ref].stage] || "Ver postulación")}</button>`
             : `<button class="radar-button primary" data-apply="${j.ref}">Postular</button>`}
+          ${(j.trackerStatus === "applied" || j.applied) ? ""
+            : (j.trackerStatus === "drafted" || j.decision === "postular" || (runs[j.ref] && runs[j.ref].stage === "approved"))
+              ? `<button class="radar-text-button" data-mark-sent>Ya la envié</button>` : ""}
           <button class="radar-text-button" data-decide="${j.decision === "descartar" ? "pendiente" : "descartar"}">${j.decision === "descartar" ? "Restaurar" : "Descartar"}</button>
         </div>
       </article>`).join("") : '<div class="board-empty"><span aria-hidden="true">·</span><p>No hay ofertas con estos filtros.</p></div>';
@@ -193,9 +198,14 @@
         <p class="radar-meta">Verificación: ${p.verification.filter((v) => v.ok).length}/${p.verification.length} puntos OK${p.verification.some((v) => !v.ok) ? " · revisar: " + p.verification.filter((v) => !v.ok).map((v) => esc(v.item)).join("; ") : ""}</p></div></div>
         <form id="reviseForm" class="apply-revise"><label for="reviseText">¿Algo que cambiar?</label><textarea id="reviseText" rows="2" maxlength="2000" placeholder="Ej. menciona mi proyecto de la escuela de manejo antes que Heartly"></textarea>
         <footer class="apply-actions"><button class="radar-button primary" type="button" data-approve>Aprobar</button><button class="radar-button" type="submit">Pedir cambios</button><button class="radar-text-button" type="button" data-cancel>Descartar borrador</button></footer></form>`; }
-      case "approved": return `<div class="apply-done"><p><strong>Aprobada y registrada en tu tracker.</strong> Ahora envíala tú:</p>
-        <p><a class="radar-button primary" href="${esc(run.url)}" target="_blank" rel="noopener noreferrer">Ir a la oferta y postular ↗</a></p>
+      case "approved": {
+        const job = data?.jobs?.find((j) => j.ref === run.ref);
+        const sent = job?.trackerStatus === "applied" || job?.applied;
+        return `<div class="apply-done"><p><strong>Aprobada y registrada en tu tracker.</strong> ${sent ? "Ya quedó como enviada." : "Ahora envíala tú:"}</p>
+        <p><a class="radar-button primary" href="${esc(run.url)}" target="_blank" rel="noopener noreferrer">Ir a la oferta y postular ↗</a>
+        ${sent ? '<span class="radar-badge positive">Enviada</span>' : `<button class="radar-button primary" type="button" data-mark-sent-ref="${esc(run.ref)}">Ya la envié</button>`}</p>
         <p class="radar-meta">Archivos: <a href="${pdfUrl(run.preview.cv, run.preview.version)}" target="_blank" rel="noopener">CV</a> · <a href="${pdfUrl(run.preview.cover, run.preview.version)}" target="_blank" rel="noopener">Carta</a>. Cuando la envíes, en Claude Code: <code>/outcome ${esc(run.company)}</code>.</p></div>`;
+      }
       case "error": return `${evaluation}<div class="apply-error"><p>${esc(run.error || "Algo falló.")}</p><button class="radar-button" data-retry>Reintentar desde el inicio</button></div>`;
       default: return "<p>Sin datos.</p>";
     }
@@ -225,6 +235,12 @@
   }
   dialog.addEventListener("click", (e) => {
     if (e.target.closest("[data-close]")) return dialog.close();
+    const markRef = e.target.closest("[data-mark-sent-ref]");
+    if (markRef) {
+      const ref = Number(markRef.dataset.markSentRef);
+      const job = data?.jobs?.find((j) => j.ref === ref);
+      return markSent(job?.key, markRef);
+    }
     if (e.target.closest("[data-cancel]")) { if (confirm("¿Cancelar esta postulación?")) act("cancel"); return; }
     if (e.target.closest("[data-approve]")) { if (confirm("¿Aprobar este CV y carta? Quedará registrada para que la envíes tú.")) act("approve"); return; }
     if (e.target.closest("[data-retry]")) { const ref = openRef; api("/api/jobsearch/apply/cancel", { ref }).finally(() => openPanel(ref, true)); }
@@ -243,9 +259,26 @@
     }
   });
 
+  async function markSent(key, btn) {
+    if (!key || busy) return;
+    busy = true; if (btn) btn.disabled = true;
+    try {
+      data = await api("/api/jobsearch/mark-sent", { key });
+      render();
+      if (openRef != null && runs[openRef]) renderPanel(runs[openRef]);
+      $("jobsFeedback").textContent = "Marcada como enviada.";
+    } catch (e) { $("jobsFeedback").textContent = e.message; if (btn) btn.disabled = false; }
+    finally { busy = false; }
+  }
+
   $("jobsList").addEventListener("click", async (event) => {
     const opener = event.target.closest("[data-apply],[data-open]");
     if (opener) return openPanel(Number(opener.dataset.apply || opener.dataset.open), Boolean(opener.dataset.apply));
+    const mark = event.target.closest("[data-mark-sent]");
+    if (mark) {
+      const item = mark.closest("[data-key]");
+      return markSent(item?.dataset.key, mark);
+    }
     const btn = event.target.closest("[data-decide]");
     if (!btn || busy) return;
     const item = btn.closest("[data-key]");

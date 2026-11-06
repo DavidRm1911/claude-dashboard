@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createJobSearchStore, aggregateGaps, jobIsRemote } from '../lib/jobsearch.js';
+import { createJobSearchStore, aggregateGaps, jobIsRemote, normUrl, TRACKER_COLS } from '../lib/jobsearch.js';
 import { createKanbanStore } from '../lib/kanban.js';
 
 function workspace(t) {
@@ -123,4 +123,62 @@ test('jobIsRemote: location heuristic and remote portals; get() exposes isRemote
   const byRef = Object.fromEntries(store.get().jobs.map(j => [j.ref, j]));
   assert.equal(byRef[30].isRemote, true);
   assert.equal(byRef[31].isRemote, false);
+});
+
+test('normUrl strips query hash trailing slash and lowercases', () => {
+  assert.equal(normUrl('HTTPS://X.com/Job/1/?utm=a#x'), 'https://x.com/job/1');
+  assert.equal(normUrl(''), null);
+});
+
+test('ensureTracker creates header; ensureDecisions creates schema on get()', (t) => {
+  const { store, dir } = workspace(t);
+  const tracker = path.join(dir, 'repo', 'job_search_tracker.csv');
+  const decisions = path.join(dir, 'repo', 'job_scraper', 'decisions.json');
+  assert.equal(fs.existsSync(tracker), false);
+  assert.equal(fs.existsSync(decisions), false);
+  store.get();
+  assert.equal(fs.readFileSync(tracker, 'utf8'), TRACKER_COLS.join(',') + '\n');
+  assert.deepEqual(JSON.parse(fs.readFileSync(decisions, 'utf8')), { schema: 1, decisions: {} });
+  store.get(); // idempotent
+  assert.equal(fs.readFileSync(tracker, 'utf8'), TRACKER_COLS.join(',') + '\n');
+});
+
+test('match by URL marks applied even when company/title differ; fallback company|title if source empty', (t) => {
+  const { store, dir } = workspace(t);
+  const tracker = path.join(dir, 'repo', 'job_search_tracker.csv');
+  fs.writeFileSync(tracker, TRACKER_COLS.join(',') + '\n'
+    + '2026-01-01,OtherCo,,Other Role,,,applied,,,,,,https://x/1,\n'
+    + '2026-01-02,Beta,,SRE,,,drafted,,,,,,,\n');
+  const byRef = Object.fromEntries(store.get().jobs.map(j => [j.ref, j]));
+  assert.equal(byRef[1].applied, true);
+  assert.equal(byRef[1].trackerStatus, 'applied');
+  assert.equal(byRef[2].applied, true);
+  assert.equal(byRef[2].trackerStatus, 'drafted');
+});
+
+test('markSent creates row or upgrades drafted→applied; already applied is no-op', (t) => {
+  const { store, dir } = workspace(t);
+  const tracker = path.join(dir, 'repo', 'job_search_tracker.csv');
+  // create via markSent
+  let data = store.markSent({ key: 'a' });
+  assert.equal(data.jobs.find(j => j.key === 'a').trackerStatus, 'applied');
+  assert.equal(data.stats.applied, 1);
+  const rows = fs.readFileSync(tracker, 'utf8').trim().split('\n');
+  assert.equal(rows.length, 2);
+  assert.match(rows[1], /applied/);
+  assert.match(rows[1], /https:\/\/x\/1/);
+  // drafted → applied
+  fs.writeFileSync(tracker, TRACKER_COLS.join(',') + '\n'
+    + '2026-01-01,Beta,,SRE,,portal,drafted,,,,,,https://x/2,\n');
+  data = store.markSent({ key: 'b' });
+  assert.equal(data.jobs.find(j => j.key === 'b').trackerStatus, 'applied');
+  assert.equal(data.stats.drafted, 0);
+  assert.equal(data.stats.applied, 1);
+  assert.match(fs.readFileSync(tracker, 'utf8'), /enviado /);
+  // no-op
+  const before = fs.readFileSync(tracker, 'utf8');
+  store.markSent({ key: 'b' });
+  assert.equal(fs.readFileSync(tracker, 'utf8'), before);
+  assert.throws(() => store.markSent({ key: 'c' }), { status: 404 });
+  assert.throws(() => store.markSent({}), { status: 400 });
 });
