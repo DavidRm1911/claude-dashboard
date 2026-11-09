@@ -863,6 +863,7 @@ body[data-section="radar"] .interview-bubble { display: none; }
 .radar-feedback { color: var(--muted); font-size: 0.8rem; line-height: 1.5; margin: 0 0 16px; }
 .radar-feedback:empty { display: none; }
 .radar-feedback.is-error { color: var(--crit); }
+.jobs-refresh-error { color: var(--crit); font-weight: 600; }
 .radar-layout { display: grid; grid-template-columns: 178px minmax(0, 1fr); gap: 28px; align-items: start; }
 .radar-rail { padding-top: 16px; position: sticky; top: 16px; }
 .radar-rail-label { font-family: var(--font-data); font-size: 0.72rem; color: var(--muted); letter-spacing: 0.1em; }

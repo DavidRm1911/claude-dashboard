@@ -15,6 +15,7 @@ import { createKanbanStore, taskBrief, syncFromMem0, seedProjects } from "./lib/
 import { createPlanner } from "./lib/planner.js";
 import { createJobSearchStore } from "./lib/jobsearch.js";
 import { createApplyFlow } from "./lib/applyflow.js";
+import { createJobRefresh } from "./lib/jobrefresh.js";
 import { createStudiesStore } from "./lib/studies.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -187,7 +188,10 @@ function resolveBin(name) {
   return name; // deja que el PATH del proceso lo resuelva si lo tiene
 }
 const CLAUDE_BIN = resolveBin("claude");
-const applyFlow = createApplyFlow({ repoDir: JOBSEARCH_DIR, dataDir: IDEAS_DIR, bin: CLAUDE_BIN, home: HOME, jobSearchStore, kanbanStore });
+// The LaunchAgent has no CLAUDE_CONFIG_DIR, so claude would fall back to ~/.claude (expired OAuth); tools/daily.sh uses ~/.claude-personal.
+const CLAUDE_CONFIG_DIR_FOR_JOBS = process.env.DASHBOARD_CLAUDE_CONFIG_DIR || (fs.existsSync(path.join(HOME, ".claude-personal")) ? path.join(HOME, ".claude-personal") : "");
+const applyFlow = createApplyFlow({ repoDir: JOBSEARCH_DIR, dataDir: IDEAS_DIR, bin: CLAUDE_BIN, home: HOME, jobSearchStore, kanbanStore, claudeConfigDir: CLAUDE_CONFIG_DIR_FOR_JOBS });
+const jobRefresh = createJobRefresh({ repoDir: JOBSEARCH_DIR, dataDir: IDEAS_DIR, home: HOME, claudeConfigDir: CLAUDE_CONFIG_DIR_FOR_JOBS });
 const GROK_BIN = resolveBin("grok");
 const AGY_BIN = resolveBin("agy");
 const planTasks = createPlanner({ bin: CLAUDE_BIN, cwd: os.tmpdir() });
@@ -1697,6 +1701,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/jobsearch' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(jobSearchStore.get())); return;
+    }
+    if (url.pathname === '/api/jobsearch/refresh' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(jobRefresh.status())); return;
+    }
+    if (url.pathname === '/api/jobsearch/refresh' && req.method === 'POST') {
+      await readJson(req, 1024);
+      const status = jobRefresh.start();
+      res.writeHead(202, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(status)); return;
     }
     if (url.pathname === '/api/jobsearch/decide' && req.method === 'POST') {
       const body = await readJson(req, 2048);
