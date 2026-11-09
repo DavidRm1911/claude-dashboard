@@ -100,3 +100,9 @@ test('classifyClaudeError tells auth from quota from everything else', () => {
   assert.equal(classifyClaudeError('algo raro'), null);
   assert.equal(classifyClaudeError(undefined), null);
 });
+
+test('extractJson finds the answer among prose and several fenced blocks', () => {
+  assert.deepEqual(extractJson('Listo.\n```bash\nls\n```\nResultado:\n```json\n{"a":1}\n```\nFin.'), { a: 1 });
+  assert.deepEqual(extractJson('Nota {no json} y luego {"b":2}'), { b: 2 });
+  assert.throws(() => extractJson('sin json'));
+});
