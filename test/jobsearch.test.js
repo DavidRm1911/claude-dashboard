@@ -282,3 +282,21 @@ test('get() exposes queue (new|unreachable) and filteredJobs (skipped), capped s
   assert.equal(data.stats.backlog >= 2, true);
   assert.equal(data.stats.filtered >= 2, true); // workspace fixture has 1 skipped + f1
 });
+
+test('applied counts tracker rows with status applied; sent jobs leave the open list', (t) => {
+  const { dir, store } = workspace(t);
+  const rows = [
+    TRACKER_COLS.join(','),
+    '2026-11-08,Acme,,Cloud Engineer,AI,portal,applied,,,LinkedIn Easy Apply; enviado 2026-11-08,,,https://x/1,',
+    '2026-11-08,Solera,,AI Developer,AI,portal,applied,,,LinkedIn Easy Apply; enviado 2026-11-08,,,https://www.linkedin.com/jobs/view/4488807396,',
+    '2026-11-08,Other,,Role,AI,portal,drafted,,,,,,https://x/9,',
+  ];
+  fs.writeFileSync(path.join(dir, 'repo', 'job_search_tracker.csv'), rows.join('\n') + '\n');
+  const data = store.get();
+  assert.equal(data.stats.applied, 2);
+  assert.equal(data.stats.drafted, 1);
+  const acme = data.jobs.find(j => j.ref === 1);
+  assert.equal(acme.applied, true);
+  assert.equal(acme.trackerStatus, 'applied');
+  assert.equal(data.stats.open, 0, 'an applied job is never suggested again');
+});

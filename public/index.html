@@ -132,8 +132,9 @@
   <section id="jobs" class="jobs" data-tier="jobs" role="tabpanel" aria-labelledby="jobsTitle">
     <header class="radar-heading">
       <div><span class="eyebrow">TU BÚSQUEDA, CADA MAÑANA</span><h2 id="jobsTitle">Ofertas que encajan contigo.<br/>Tú decides a cuáles ir.</h2><p>Puntuadas contra tu perfil real. Elige “Postular” y Claude te preguntará lo que falte antes de redactar. Nada se envía solo.</p></div>
-      <div class="radar-sync"><span id="jobsSync">Leyendo ai-job-search…</span><button id="jobsReload" class="radar-button">Recargar</button></div>
+      <div class="radar-sync"><span id="jobsSync">Leyendo ai-job-search…</span><button id="jobsReload" class="radar-button" title="Vuelve a leer los datos, no busca ofertas nuevas">Recargar vista</button><button id="jobsSearchNow" class="radar-button" title="Corre la búsqueda y el ranking diarios ahora (tarda unos minutos)">Buscar ofertas nuevas</button></div>
     </header>
+    <p id="jobsRefreshStatus" class="radar-feedback" role="status" aria-live="polite"></p>
     <div id="jobsStats" class="jobs-stats"></div>
     <p id="jobsFeedback" class="radar-feedback" role="status" aria-live="polite"></p>
     <div class="jobs-layout">

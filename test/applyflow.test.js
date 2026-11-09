@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { createApplyFlow, validateAnswers, extractJson } from '../lib/applyflow.js';
+import { createApplyFlow, validateAnswers, extractJson, classifyClaudeError, CLAUDE_AUTH_MESSAGE } from '../lib/applyflow.js';
 import { createJobSearchStore } from '../lib/jobsearch.js';
 import { createKanbanStore } from '../lib/kanban.js';
 
@@ -16,7 +16,8 @@ function fakeSpawn(replies, calls) {
     child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
     child.kill = () => {};
     child.stdin.on('finish', () => setImmediate(() => {
-      child.stdout.end(JSON.stringify({ is_error: false, result: '```json\n' + JSON.stringify(replies.shift()) + '\n```' }));
+      const reply = replies.shift();
+      child.stdout.end(JSON.stringify(reply.__envelope || { is_error: false, result: '```json\n' + JSON.stringify(reply) + '\n```' }));
       setImmediate(() => child.emit('close', 0));
     }));
     return child;
@@ -54,7 +55,8 @@ test('full flow: analyze -> questions -> draft preview -> approve writes tracker
   assert.deepEqual(flow.status(7).answers.q1.picked, ['No lo he usado']);
   await until(() => flow.status(7).stage === 'preview');
   assert.ok(calls[1].args.includes('Edit(cv/**)'));
-  assert.ok(!fs.existsSync(path.join(repo, 'job_search_tracker.csv')), 'nothing recorded before approval');
+  const tracker = path.join(repo, 'job_search_tracker.csv');
+  assert.equal(fs.readFileSync(tracker, 'utf8').trim().split('\n').length, 1, 'only the header before approval');
   assert.equal(kanban.get().tasks[0].status, 'review');
   flow.approve(7);
   const csv = fs.readFileSync(path.join(repo, 'job_search_tracker.csv'), 'utf8');
@@ -77,4 +79,24 @@ test('answers are restricted to offered options; json extraction tolerates fence
   assert.deepEqual(validateAnswers(qs, { q1: { picked: ['A', 'Z'], note: ' n ' }, q9: { picked: ['A'] } }), { q1: { question: 'T', picked: ['A'], note: 'n' } });
   assert.throws(() => validateAnswers(qs, []), { status: 400 });
   assert.deepEqual(extractJson('texto ```json\n{"a":1}\n``` fin'), { a: 1 });
+});
+
+test('an expired Claude login is reported as claude_auth with a clear message, and can be retried', async (t) => {
+  const bad = { __envelope: { is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed' } };
+  const { flow } = setup(t, [bad, bad], []);
+  flow.start(7);
+  await until(() => flow.status(7).stage === 'error');
+  const run = flow.status(7);
+  assert.equal(run.errorCode, 'claude_auth');
+  assert.equal(run.error, CLAUDE_AUTH_MESSAGE);
+  assert.equal(flow.start(7).stage, 'analyzing', 'an errored run can be retried');
+});
+
+test('classifyClaudeError tells auth from quota from everything else', () => {
+  assert.equal(classifyClaudeError('Failed to authenticate: OAuth session expired'), 'claude_auth');
+  assert.equal(classifyClaudeError('Please run /login'), 'claude_auth');
+  assert.equal(classifyClaudeError('Claude usage limit reached'), 'claude_quota');
+  assert.equal(classifyClaudeError('Exceeded max-budget'), 'claude_quota');
+  assert.equal(classifyClaudeError('algo raro'), null);
+  assert.equal(classifyClaudeError(undefined), null);
 });

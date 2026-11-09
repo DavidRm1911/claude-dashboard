@@ -4,7 +4,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const esc = escapeHtml;
-  let data = null, busy = false, runs = {}, openRef = null, pollTimer = null;
+  let data = null, busy = false, runs = {}, openRef = null, pollTimer = null, refresh = null, refreshTimer = null;
+  const limaTime = (iso) => new Date(iso).toLocaleString("es-PE", { timeZone: "America/Lima", dateStyle: "medium", timeStyle: "short" }) + " (hora Lima)";
 
   async function api(url, body) {
     const res = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard-Request": "1" }, body: JSON.stringify(body) } : {});
@@ -18,7 +19,8 @@
 
   function renderStats() {
     const s = data.stats;
-    const run = data.lastRun ? `Última búsqueda: ${new Date(data.lastRun.at).toLocaleString("es-PE")} · ${data.lastRun.fetched} revisadas · ${data.lastRun.new} nuevas` : "Aún sin búsquedas registradas";
+    const ls = refresh?.last?.search, lr = ls ? { at: ls.lastAt, fetched: ls.fetched, new: ls.newAdded } : data.lastRun;
+    const run = lr ? `Última búsqueda: ${limaTime(lr.at)} · revisó ${lr.fetched} · nuevas ${lr.new}` : "Aún sin búsquedas registradas";
     const rk = data.ranking;
     const warn = rk?.stale
       ? ` <span class="radar-badge warning">${esc(`Ranking desactualizado: último puntaje ${rk.ageDays != null ? `hace ${rk.ageDays} días` : "desconocido"}${rk.lastRankDate ? ` (${rk.lastRankDate.slice(0, 10)})` : ""}${rk.lastRankRun?.ok === false ? " · último intento falló" : ""}`)}</span>`
@@ -191,7 +193,7 @@
         </div>
         <div class="radar-item-actions">
           ${runs[j.ref] && !["cancelled"].includes(runs[j.ref].stage)
-            ? `<button class="radar-button primary" data-open="${j.ref}">${esc(STAGE_LABEL[runs[j.ref].stage] || "Ver postulación")}</button>`
+            ? `<button class="radar-button primary" data-open="${j.ref}">${esc(stageLabel(runs[j.ref]))}</button>`
             : `<button class="radar-button primary" data-apply="${j.ref}">Postular</button>`}
           ${(j.trackerStatus === "applied" || j.applied) ? ""
             : (j.trackerStatus === "drafted" || j.decision === "postular" || (runs[j.ref] && runs[j.ref].stage === "approved"))
@@ -210,8 +212,9 @@
 
   async function load() {
     try {
-      const [jobs, list] = await Promise.all([api("/api/jobsearch"), api("/api/jobsearch/apply")]);
+      const [jobs, list, rf] = await Promise.all([api("/api/jobsearch"), api("/api/jobsearch/apply"), api("/api/jobsearch/refresh").catch(() => null)]);
       data = jobs; runs = Object.fromEntries(list.map((r) => [r.ref, r]));
+      if (rf) { const wasRunning = refresh?.state === "running"; refresh = rf; if (rf.state === "running" && !wasRunning) trackRefresh(); }
       render(); $("jobsFeedback").textContent = "";
     }
     catch (e) { $("jobsFeedback").textContent = e.message; }
@@ -219,6 +222,7 @@
 
 
   const STAGE_LABEL = { analyzing: "Analizando…", questions: "Responder preguntas", drafting: "Redactando…", revising: "Aplicando cambios…", preview: "Ver vista previa", approved: "Aprobada ✓", error: "Ver error" };
+  const stageLabel = (r) => (r.stage === "error" && r.errorCode === "claude_auth" ? "Inicia sesión en Claude" : STAGE_LABEL[r.stage] || "Ver postulación");
   const BUSY = ["analyzing", "drafting", "revising"];
   const dialog = document.createElement("dialog");
   dialog.className = "apply-dialog"; dialog.setAttribute("aria-labelledby", "applyTitle");
@@ -260,7 +264,7 @@
         ${sent ? '<span class="radar-badge positive">Enviada</span>' : `<button class="radar-text-button" type="button" data-mark-sent-ref="${esc(run.ref)}">Ya la envié</button>`}</p>
         <p class="radar-meta">Archivos: <a href="${pdfUrl(run.preview.cv, run.preview.version)}" target="_blank" rel="noopener">CV</a> · <a href="${pdfUrl(run.preview.cover, run.preview.version)}" target="_blank" rel="noopener">Carta</a>. Cuando la envíes, en Claude Code: <code>/outcome ${esc(run.company)}</code>.</p></div>`;
       }
-      case "error": return `${evaluation}<div class="apply-error"><p>${esc(run.error || "Algo falló.")}</p><button class="radar-button" data-retry>Reintentar desde el inicio</button></div>`;
+      case "error": return `${evaluation}<div class="apply-error"><p><strong>${run.errorCode === "claude_auth" ? "Inicia sesión en Claude" : "No se pudo completar"}</strong></p><p>${esc(run.error || "Algo falló.")}</p><button class="radar-button" data-retry>Reintentar</button></div>`;
       default: return "<p>Sin datos.</p>";
     }
   }
@@ -388,6 +392,34 @@
   });
   $("jobsFilters").addEventListener("submit", (e) => e.preventDefault());
   $("jobsReload").addEventListener("click", load);
+
+  const searchBtn = $("jobsSearchNow"), statusEl = $("jobsRefreshStatus");
+  const showRefresh = (text, isError) => { statusEl.textContent = text; statusEl.classList.toggle("jobs-refresh-error", Boolean(isError)); };
+  function showRefreshDone(r) {
+    if (r.state === "error") return showRefresh(r.error || "La búsqueda falló.", true);
+    const s = r.result?.search, k = r.result?.rank;
+    showRefresh(`Listo: revisó ${s?.fetched ?? 0}, nuevas ${s?.newAdded ?? 0}.${k?.rankedTotal != null ? ` Puntuadas en total: ${k.rankedTotal}.` : ""}${r.warning ? " " + r.warning : ""}`);
+  }
+  function trackRefresh() {
+    clearTimeout(refreshTimer);
+    if (refresh?.state === "running") {
+      searchBtn.disabled = true; searchBtn.textContent = "Buscando…";
+      showRefresh(`Buscando y puntuando ofertas… empezó ${limaTime(refresh.startedAt)}. Tarda unos minutos; puedes seguir usando el dashboard.`);
+      refreshTimer = setTimeout(async () => {
+        try { refresh = await api("/api/jobsearch/refresh"); } catch {}
+        trackRefresh();
+      }, 5000);
+      return;
+    }
+    searchBtn.disabled = false; searchBtn.textContent = "Buscar ofertas nuevas";
+    showRefreshDone(refresh);
+    load();
+  }
+  searchBtn.addEventListener("click", async () => {
+    searchBtn.disabled = true; searchBtn.textContent = "Buscando…";
+    try { refresh = await api("/api/jobsearch/refresh", {}); trackRefresh(); }
+    catch (e) { searchBtn.disabled = false; searchBtn.textContent = "Buscar ofertas nuevas"; showRefresh(e.message, true); }
+  });
   document.addEventListener("dashboard:tier", (e) => { if (e.detail === "jobs") load(); });
   if (document.body.dataset.section === "jobs") load();
 })();
